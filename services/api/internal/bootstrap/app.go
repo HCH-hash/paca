@@ -37,6 +37,7 @@ import (
 	pluginsvc "github.com/Paca-AI/api/internal/service/plugin"
 	projectsvc "github.com/Paca-AI/api/internal/service/project"
 	sprintsvc "github.com/Paca-AI/api/internal/service/sprint"
+	statusrulesvc "github.com/Paca-AI/api/internal/service/statusrule"
 	tasksvc "github.com/Paca-AI/api/internal/service/task"
 	usersvc "github.com/Paca-AI/api/internal/service/user"
 	workflowsvc "github.com/Paca-AI/api/internal/service/workflow"
@@ -65,6 +66,7 @@ type App struct {
 	notificationConsumer *worker.NotificationConsumer
 	pluginEventConsumer  *worker.PluginEventConsumer
 	workflowConsumer     *worker.WorkflowConsumer
+	statusRuleConsumer   *worker.StatusRuleConsumer
 	log                  *slog.Logger
 }
 
@@ -106,14 +108,18 @@ func New(cfg *config.Config) (*App, error) {
 	docRepo := pgRepo.NewDocumentRepository(db)
 	refreshStore := redisRepo.NewRefreshTokenStore(redisClient)
 	pluginRepo := pgRepo.NewPluginRepository(db)
-	rawWorkflowRepo := pgRepo.NewWorkflowRepository(db)
-	// Wraps rawWorkflowRepo with a cache for status-rule reads, invalidated
-	// on writes — shared between workflowService and workflowConsumer below
-	// so a rule edited via the API is visible to the very next automation
-	// event. rawWorkflowRepo itself is kept around only for
-	// StatusUsedByWorkflow, a Postgres-specific check outside the
-	// workflowdom.Repository interface this decorator implements.
-	workflowRepo := workflowsvc.NewCachedRepository(rawWorkflowRepo, cacheStore, cfg.Cache.ConfigTTL, log)
+	// Not decorated with a cache: since StatusRule moved out of the
+	// workflow aggregate entirely, nothing left in workflowdom.Repository is
+	// hot enough on the automation read path to need one (see
+	// statusrulesvc.CachedRepository for the read that actually is).
+	workflowRepo := pgRepo.NewWorkflowRepository(db)
+	statusRuleRepo := pgRepo.NewStatusRuleRepository(db)
+	// Wraps statusRuleRepo with a cache for enabled-rule reads, invalidated
+	// on writes — shared between statusRuleService and both consumers below
+	// (the project-wide status-rule consumer, and the automation-workflow
+	// predecessor-done cascade) so a rule edited via the API is visible to
+	// the very next automation event.
+	cachedStatusRuleRepo := statusrulesvc.NewCachedRepository(statusRuleRepo, cacheStore, cfg.Cache.ConfigTTL, log)
 
 	// --- Schema migration ---------------------------------------------------
 	// All statements use CREATE TABLE IF NOT EXISTS / INSERT … ON CONFLICT so
@@ -141,7 +147,7 @@ func New(cfg *config.Config) (*App, error) {
 	userService := usersvc.New(userRepo, permissionStore, globalRoleRepo)
 	globalRoleService := globalrolesvc.NewCachedService(globalrolesvc.New(globalRoleRepo), cacheStore, cfg.Cache.ConfigTTL, log)
 	projectService := projectsvc.NewCachedService(projectsvc.New(projectRepo, taskRepo), cacheStore, cfg.Cache.ProjectTTL, cfg.Cache.ConfigTTL, log)
-	taskService := tasksvc.NewCachedService(tasksvc.New(taskRepo).WithWorkflowStatusChecker(rawWorkflowRepo), cacheStore, cfg.Cache.ConfigTTL, log)
+	taskService := tasksvc.NewCachedService(tasksvc.New(taskRepo).WithWorkflowStatusChecker(workflowRepo).WithStatusRuleChecker(statusRuleRepo), cacheStore, cfg.Cache.ConfigTTL, log)
 	sprintService := sprintsvc.NewCachedSprintService(sprintsvc.New(sprintRepo, taskRepo, publisher), cacheStore, cfg.Cache.SprintTTL, log)
 	viewService := sprintsvc.NewCachedViewService(sprintsvc.NewViewService(viewRepo, publisher), cacheStore, cfg.Cache.SprintTTL, log)
 	notificationService := notificationsvc.New(notificationRepo, projectRepo, publisher)
@@ -176,8 +182,14 @@ func New(cfg *config.Config) (*App, error) {
 	docActivityService := docsvc.NewActivityService(docRepo, projectRepo, publisher).
 		WithNotificationService(notificationService)
 	docActivityConsumer := worker.NewDocActivityConsumer(redisClient, docRepo, projectRepo, log)
+	statusRuleService := statusrulesvc.New(cachedStatusRuleRepo, taskService, projectRepo, activityService, publisher)
 	workflowService := workflowsvc.New(workflowRepo, taskRepo, projectRepo, publisher)
-	workflowConsumer := worker.NewWorkflowConsumer(redisClient, workflowRepo, taskRepo, taskService, activityService, publisher, log)
+	// WorkflowConsumer only handles the graph-driven "predecessor done"
+	// cascade now — reassignment itself is delegated to statusRuleService,
+	// shared with the project-wide statusRuleConsumer below (see
+	// docs/architecture/automation-workflows.md).
+	workflowConsumer := worker.NewWorkflowConsumer(redisClient, workflowRepo, taskRepo, statusRuleService, log)
+	statusRuleConsumer := worker.NewStatusRuleConsumer(redisClient, taskRepo, statusRuleService, log)
 
 	// Object storage — defaults to MinIO; switches to AWS S3 when STORAGE_PROVIDER=s3.
 	storageClient, err := storage.NewS3Client(context.Background(), storage.S3Config{
@@ -283,6 +295,7 @@ func New(cfg *config.Config) (*App, error) {
 		WithMemberRepo(projectRepo)
 	convHandler := handler.NewConversationHandler(agentService)
 	workflowHandler := handler.NewWorkflowHandler(workflowService)
+	statusRuleHandler := handler.NewStatusRuleHandler(statusRuleService)
 
 	// --- Handlers -----------------------------------------------------------
 	cookieCfg := handler.CookieConfig{
@@ -326,6 +339,7 @@ func New(cfg *config.Config) (*App, error) {
 		Agent:              agentHandler,
 		Conversation:       convHandler,
 		Workflow:           workflowHandler,
+		StatusRule:         statusRuleHandler,
 		Log:                log,
 		CORSAllowedOrigins: cfg.Server.CORSAllowedOrigins,
 	}
@@ -340,7 +354,7 @@ func New(cfg *config.Config) (*App, error) {
 		IdleTimeout:  60 * time.Second,
 	}
 
-	return &App{server: srv, publisher: publisher, activityConsumer: activityConsumer, docActivityConsumer: docActivityConsumer, notificationConsumer: notificationConsumer, pluginEventConsumer: pluginEventConsumer, workflowConsumer: workflowConsumer, log: log}, nil
+	return &App{server: srv, publisher: publisher, activityConsumer: activityConsumer, docActivityConsumer: docActivityConsumer, notificationConsumer: notificationConsumer, pluginEventConsumer: pluginEventConsumer, workflowConsumer: workflowConsumer, statusRuleConsumer: statusRuleConsumer, log: log}, nil
 }
 
 // Run starts the activity consumers and the HTTP server.
@@ -352,6 +366,7 @@ func (a *App) Run() error {
 	a.notificationConsumer.Start(context.Background())
 	a.pluginEventConsumer.Start(context.Background())
 	a.workflowConsumer.Start(context.Background())
+	a.statusRuleConsumer.Start(context.Background())
 	return a.server.ListenAndServe()
 }
 
@@ -363,6 +378,7 @@ func (a *App) Shutdown(ctx context.Context) error {
 	a.notificationConsumer.Stop()
 	a.pluginEventConsumer.Stop()
 	a.workflowConsumer.Stop()
+	a.statusRuleConsumer.Stop()
 	if a.publisher != nil {
 		a.publisher.Close()
 	}

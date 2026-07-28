@@ -581,6 +581,81 @@
 				"cancel": "キャンセル",
 				"deletePermanently": "完全に削除"
 			}
+		},
+		"statusRules": {
+			"title": "ステータス割り当てルール",
+			"description": "タスクが設定したステータスに達するたびに、プロジェクト全体で自動的にメンバーへ割り当てます。フィルターで対象タスクを絞り込むこともできます。",
+			"newRule": "新しいルール",
+			"ruleCount_one": "{{count}} 件のルール",
+			"ruleCount_other": "{{count}} 件のルール",
+			"assignsTo": "{{member}} に割り当て",
+			"allTasks": "すべてのタスク",
+			"filterCount_one": "{{count}} 件のフィルター",
+			"filterCount_other": "{{count}} 件のフィルター",
+			"enabledLabel": "有効",
+			"editRule": "ルールを編集",
+			"deleteRule": "ルールを削除",
+			"empty": {
+				"title": "ステータス割り当てルールはまだありません",
+				"description": "タスクが特定のステータスに達したときに自動的にメンバーへ割り当てるルールを作成しましょう。",
+				"createRule": "最初のルールを作成"
+			},
+			"deleteDialog": {
+				"title": "ルールを削除",
+				"description": "「{{name}}」を削除しますか？この操作は取り消せません。",
+				"cancel": "キャンセル",
+				"confirm": "ルールを削除"
+			},
+			"formDialog": {
+				"createTitle": "新しいステータス割り当てルール",
+				"editTitle": "ステータス割り当てルールを編集",
+				"description": "選択したステータスに達した一致するタスクを自動的にメンバーへ割り当てます。",
+				"nameLabel": "名前",
+				"namePlaceholder": "例: バグをQAに割り当て",
+				"statusLabel": "トリガーステータス",
+				"statusPlaceholder": "ステータス",
+				"statusImmutableHint": "ステータスは作成後に変更できません。削除して作り直してください。",
+				"assigneeLabel": "割り当て先",
+				"assigneePlaceholder": "メンバー",
+				"enabledLabel": "有効",
+				"enabledHint": "実行せずに設定だけ残したい場合は無効にします。",
+				"filterTitle": "フィルター",
+				"filterHint": "以下のすべての条件に一致するタスクに範囲を絞ります。すべて空にすると、このステータスのすべてのタスクに適用されます。",
+				"cancel": "キャンセル",
+				"saveChanges": "変更を保存",
+				"createRule": "ルールを作成",
+				"errors": {
+					"nameInvalid": "名前を入力してください。",
+					"crossProject": "選択したステータスまたはメンバーがこのプロジェクトに属していません。",
+					"unknownCustomField": "フィルターが存在しないカスタムフィールドを参照しています。",
+					"saveFailed": "ルールの保存に失敗しました。もう一度お試しください。"
+				},
+				"filters": {
+					"taskType": "タスクタイプ",
+					"sprint": "スプリント",
+					"assignee": "現在の担当者",
+					"tags": "タグ",
+					"importance": "重要度",
+					"storyPoints": "ストーリーポイント",
+					"dates": "日付",
+					"startDate": "開始日",
+					"dueDate": "期限",
+					"any": "すべて",
+					"selectedCount_one": "{{count}} 件選択中",
+					"selectedCount_other": "{{count}} 件選択中",
+					"backlogOnly": "バックログのみ（スプリントなし）",
+					"unassigned": "未割り当て",
+					"noSprints": "このプロジェクトにはまだスプリントがありません",
+					"noTaskTypes": "このプロジェクトにはまだタスクタイプがありません",
+					"min": "最小",
+					"max": "最大",
+					"yes": "はい",
+					"no": "いいえ",
+					"contains": "含む…",
+					"customized": "カスタム設定済み",
+					"addTag": "タグを追加"
+				}
+			}
 		}
 	},
 	"taskStatuses": {
@@ -1277,19 +1352,16 @@
 			"cancel": "キャンセル",
 			"removeConfirmAction": "削除"
 		},
-		"statusRules": {
-			"title": "ステータス → 担当者ルール",
-			"hint": "タスクがこれらのいずれかのステータスに変わるたびに、自動的にメンバーに割り当てます。これはこのワークフロー内のどのタスクにも適用されます — 誰かがタスクのステータスを直接変更した場合も、先行タスクが完了して後続タスクが現在のステータスで再評価された場合も同様です。",
-			"noRules": "ルールはまだありません",
-			"statusPlaceholder": "ステータス",
-			"memberPlaceholder": "担当者"
-		},
 		"statusTransitions": {
 			"title": "ステータスワークフロー",
 			"hint": "各ステータスでの作業が完了したときに次に来るステータスを定義します。これにより後続タスクが解除され、AIエージェントの担当者に次に設定すべきステータスを推測ではなく正確に伝えられます。ワークフロー作成時にプロジェクトのステータスからデフォルトのチェーンが自動生成されます。",
 			"nextStatusLabel": "次のステータス",
 			"terminalOption": "__END__",
 			"ambiguousWarning": "次のステータスがないステータスがちょうど1つ必要です（それがワークフローの __END__ ステータスになります）。現在: {{count}} 件設定済み。"
+		},
+		"statusRulesPage": {
+			"title": "ステータスルール",
+			"subtitle": "タスクが特定のステータスに達したときに、自動的にメンバーに割り当てます"
 		}
 	}
 }

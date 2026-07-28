@@ -581,6 +581,81 @@
 				"cancel": "Cancel",
 				"deletePermanently": "Delete permanently"
 			}
+		},
+		"statusRules": {
+			"title": "Status Assignment Rules",
+			"description": "Automatically assign a task to a member whenever it reaches a status you configure — across the whole project, optionally scoped to matching tasks with filters.",
+			"newRule": "New rule",
+			"ruleCount_one": "{{count}} rule",
+			"ruleCount_other": "{{count}} rules",
+			"assignsTo": "Assigns to {{member}}",
+			"allTasks": "All tasks",
+			"filterCount_one": "{{count}} filter",
+			"filterCount_other": "{{count}} filters",
+			"enabledLabel": "Enabled",
+			"editRule": "Edit rule",
+			"deleteRule": "Delete rule",
+			"empty": {
+				"title": "No status assignment rules yet",
+				"description": "Create a rule to automatically assign tasks to a member whenever they reach a given status.",
+				"createRule": "Create first rule"
+			},
+			"deleteDialog": {
+				"title": "Delete rule",
+				"description": "Delete \"{{name}}\"? This cannot be undone.",
+				"cancel": "Cancel",
+				"confirm": "Delete rule"
+			},
+			"formDialog": {
+				"createTitle": "New status assignment rule",
+				"editTitle": "Edit status assignment rule",
+				"description": "Automatically assign matching tasks to a member whenever they reach the selected status.",
+				"nameLabel": "Name",
+				"namePlaceholder": "e.g. Assign bugs to QA",
+				"statusLabel": "Trigger status",
+				"statusPlaceholder": "Status",
+				"statusImmutableHint": "Status cannot be changed after creation — delete and recreate instead.",
+				"assigneeLabel": "Assign to",
+				"assigneePlaceholder": "Member",
+				"enabledLabel": "Enabled",
+				"enabledHint": "Disable to keep this rule configured without it running.",
+				"filterTitle": "Filters",
+				"filterHint": "Scope this rule to tasks matching all of the criteria below. Leave everything empty to apply to every task at this status.",
+				"cancel": "Cancel",
+				"saveChanges": "Save changes",
+				"createRule": "Create rule",
+				"errors": {
+					"nameInvalid": "Name is required.",
+					"crossProject": "Selected status or member does not belong to this project.",
+					"unknownCustomField": "Filter references a custom field that no longer exists.",
+					"saveFailed": "Failed to save the rule. Please try again."
+				},
+				"filters": {
+					"taskType": "Task type",
+					"sprint": "Sprint",
+					"assignee": "Current assignee",
+					"tags": "Tags",
+					"importance": "Importance",
+					"storyPoints": "Story points",
+					"dates": "Dates",
+					"startDate": "Start date",
+					"dueDate": "Due date",
+					"any": "Any",
+					"selectedCount_one": "{{count}} selected",
+					"selectedCount_other": "{{count}} selected",
+					"backlogOnly": "Backlog only (no sprint)",
+					"unassigned": "Unassigned",
+					"noSprints": "No sprints in this project yet",
+					"noTaskTypes": "No task types in this project yet",
+					"min": "Min",
+					"max": "Max",
+					"yes": "Yes",
+					"no": "No",
+					"contains": "Contains…",
+					"customized": "Customized",
+					"addTag": "Add tag"
+				}
+			}
 		}
 	},
 	"taskStatuses": {
@@ -1277,19 +1352,16 @@
 			"cancel": "Cancel",
 			"removeConfirmAction": "Remove"
 		},
-		"statusRules": {
-			"title": "Status → assignee rules",
-			"hint": "Automatically assign a task to a member whenever it changes to one of these statuses. This applies to any task in this workflow — when someone changes a task's status directly, or when a predecessor task finishes and a downstream task is re-evaluated at its current status.",
-			"noRules": "No rules yet",
-			"statusPlaceholder": "Status",
-			"memberPlaceholder": "Assignee"
-		},
 		"statusTransitions": {
 			"title": "Status workflow",
 			"hint": "Define what status comes next once work at each status is done. This unlocks downstream tasks and tells an AI-agent assignee exactly what status to set next, instead of guessing. A default chain is generated automatically from your project's statuses when the workflow is created.",
 			"nextStatusLabel": "Next status",
 			"terminalOption": "__END__",
 			"ambiguousWarning": "Exactly one status must have no next status (this becomes the workflow's __END__ status). Currently: {{count}} configured."
+		},
+		"statusRulesPage": {
+			"title": "Status Rules",
+			"subtitle": "Automatically assign tasks to a member when they reach a given status"
 		}
 	}
 }

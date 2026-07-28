@@ -26,6 +26,8 @@
 		"agents": "Агенты",
 		"conversations": "Диалоги",
 		"automation": "Автоматизация",
+		"automationWorkflow": "Рабочий процесс",
+		"automationStatusRules": "Правила статусов",
 		"team": "Команда",
 		"settings": "Настройки",
 		"changelog": "Что нового"

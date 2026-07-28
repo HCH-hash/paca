@@ -117,11 +117,11 @@ func (s *Service) CreateWorkflow(ctx context.Context, in workflowdom.CreateWorkf
 	return w, nil
 }
 
-// seedDefaults auto-populates w's status-transition chain and default
-// status rules from the project's current task statuses. Best-effort:
-// failures are swallowed rather than failing the whole CreateWorkflow call,
-// since the workflow is still perfectly usable as an empty draft that the
-// user can fix up via the inline, always-visible chain/rules editors.
+// seedDefaults auto-populates w's status-transition chain from the
+// project's current task statuses. Best-effort: failures are swallowed
+// rather than failing the whole CreateWorkflow call, since the workflow is
+// still perfectly usable as an empty draft that the user can fix up via the
+// inline, always-visible chain editor.
 func (s *Service) seedDefaults(ctx context.Context, w *workflowdom.Workflow) {
 	statuses, err := s.taskRepo.ListTaskStatuses(ctx, w.ProjectID)
 	if err != nil || len(statuses) == 0 {
@@ -130,7 +130,6 @@ func (s *Service) seedDefaults(ctx context.Context, w *workflowdom.Workflow) {
 	sort.Slice(statuses, func(i, j int) bool { return statuses[i].Position < statuses[j].Position })
 
 	s.seedDefaultStatusTransitions(ctx, w, statuses)
-	s.seedDefaultStatusRules(ctx, w, statuses)
 }
 
 // seedDefaultStatusTransitions chains statuses (already ordered by board
@@ -154,54 +153,6 @@ func (s *Service) seedDefaultStatusTransitions(ctx context.Context, w *workflowd
 		}
 		_ = s.repo.CreateStatusTransition(ctx, t)
 	}
-}
-
-// seedDefaultStatusRules auto-assigns every status to a sensible default
-// member (see resolveDefaultAssignee), so a brand-new workflow already
-// hands off work somewhere instead of doing nothing until manually
-// configured. Skipped entirely if no suitable default assignee is found
-// (e.g. a project with no human members yet).
-func (s *Service) seedDefaultStatusRules(ctx context.Context, w *workflowdom.Workflow, statuses []*taskdom.TaskStatus) {
-	assigneeID := s.resolveDefaultAssignee(ctx, w)
-	if assigneeID == uuid.Nil {
-		return
-	}
-	now := time.Now()
-	for _, st := range statuses {
-		r := &workflowdom.StatusRule{
-			ID:               uuid.New(),
-			WorkflowID:       w.ID,
-			StatusID:         st.ID,
-			AssigneeMemberID: assigneeID,
-			CreatedAt:        now,
-			UpdatedAt:        now,
-		}
-		_ = s.repo.CreateStatusRule(ctx, r)
-	}
-}
-
-// resolveDefaultAssignee picks the member new status rules should default
-// to: the workflow's creator if they're a human user, or otherwise (the
-// creator is an AI agent, or couldn't be resolved) the project's first
-// human member — an agent can't hand its own work off to itself, so the
-// default needs to be a real person. Returns uuid.Nil if no suitable member
-// can be found (e.g. the project has no human members at all).
-func (s *Service) resolveDefaultAssignee(ctx context.Context, w *workflowdom.Workflow) uuid.UUID {
-	if w.CreatedBy != nil {
-		if creator, err := s.memberRepo.FindMemberByID(ctx, *w.CreatedBy); err == nil && !creator.IsAgent() {
-			return creator.ID
-		}
-	}
-	members, err := s.memberRepo.ListMembers(ctx, w.ProjectID)
-	if err != nil {
-		return uuid.Nil
-	}
-	for _, m := range members {
-		if !m.IsAgent() {
-			return m.ID
-		}
-	}
-	return uuid.Nil
 }
 
 // UpdateWorkflow renames/describes a workflow. Allowed regardless of lifecycle status.
@@ -288,19 +239,6 @@ func (s *Service) Activate(ctx context.Context, projectID, workflowID uuid.UUID)
 	}
 	if _, ok := workflowdom.DeriveDoneStatusID(transitions); !ok {
 		return nil, workflowdom.ErrActivateDoneStatusUndetermined
-	}
-
-	// Both automation events reassign strictly by looking up the task's
-	// current status in this workflow's status rules — with zero rules,
-	// an active workflow would run forever without ever doing anything
-	// (see seedDefaultStatusRules, which silently seeds none when the
-	// project has no human member to default to).
-	rules, err := s.repo.ListStatusRulesByWorkflow(ctx, w.ID)
-	if err != nil {
-		return nil, err
-	}
-	if len(rules) == 0 {
-		return nil, workflowdom.ErrActivateNoStatusRules
 	}
 
 	w.Status = workflowdom.StatusActive
@@ -432,7 +370,7 @@ func (s *Service) UpdateNode(ctx context.Context, projectID, workflowID, nodeID 
 	return n, nil
 }
 
-// RemoveNode deletes a node (and its edges/status-rules, via FK cascade).
+// RemoveNode deletes a node (and its edges, via FK cascade).
 func (s *Service) RemoveNode(ctx context.Context, projectID, workflowID, nodeID uuid.UUID) error {
 	w, err := s.requireEditableOwnedWorkflow(ctx, projectID, workflowID)
 	if err != nil {
@@ -449,103 +387,6 @@ func (s *Service) RemoveNode(ctx context.Context, projectID, workflowID, nodeID 
 		"project_id":  projectID.String(),
 		"workflow_id": w.ID.String(),
 		"node_id":     n.ID.String(),
-	})
-	return nil
-}
-
-// --- Status rules ---------------------------------------------------------
-
-// SetStatusRule creates or updates the workflow's status->assignee rule for a status.
-func (s *Service) SetStatusRule(ctx context.Context, projectID, workflowID uuid.UUID, in workflowdom.SetStatusRuleInput) (*workflowdom.StatusRule, error) {
-	w, err := s.requireEditableOwnedWorkflow(ctx, projectID, workflowID)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := s.assertStatusInProject(ctx, projectID, in.StatusID, workflowdom.ErrStatusRuleCrossProject); err != nil {
-		return nil, err
-	}
-	member, err := s.memberRepo.FindMemberByID(ctx, in.AssigneeMemberID)
-	if err != nil {
-		return nil, err
-	}
-	if member.ProjectID != projectID {
-		return nil, workflowdom.ErrStatusRuleCrossProject
-	}
-
-	// At most one retry: a concurrent SetStatusRule call for the same status
-	// can create the row between our list below and our create further down;
-	// on that conflict, loop once more so the second pass finds and updates
-	// the now-existing row instead of surfacing a raw duplicate-key error
-	// from what is meant to behave as an upsert.
-	for attempt := 0; attempt < 2; attempt++ {
-		existing, err := s.repo.ListStatusRulesByWorkflow(ctx, w.ID)
-		if err != nil {
-			return nil, err
-		}
-		for _, r := range existing {
-			if r.StatusID == in.StatusID {
-				r.AssigneeMemberID = in.AssigneeMemberID
-				r.UpdatedAt = time.Now()
-				if err := s.repo.UpdateStatusRule(ctx, r); err != nil {
-					return nil, err
-				}
-				s.publish(ctx, events.TopicWorkflowStatusRuleSet, map[string]any{
-					"project_id":  projectID.String(),
-					"workflow_id": w.ID.String(),
-					"rule_id":     r.ID.String(),
-					"status_id":   r.StatusID.String(),
-				})
-				return r, nil
-			}
-		}
-
-		now := time.Now()
-		r := &workflowdom.StatusRule{
-			ID:               uuid.New(),
-			WorkflowID:       w.ID,
-			StatusID:         in.StatusID,
-			AssigneeMemberID: in.AssigneeMemberID,
-			CreatedAt:        now,
-			UpdatedAt:        now,
-		}
-		if err := s.repo.CreateStatusRule(ctx, r); err != nil {
-			if errors.Is(err, workflowdom.ErrStatusRuleConflict) && attempt == 0 {
-				continue
-			}
-			return nil, err
-		}
-		s.publish(ctx, events.TopicWorkflowStatusRuleSet, map[string]any{
-			"project_id":  projectID.String(),
-			"workflow_id": w.ID.String(),
-			"rule_id":     r.ID.String(),
-			"status_id":   r.StatusID.String(),
-		})
-		return r, nil
-	}
-	return nil, workflowdom.ErrStatusRuleConflict
-}
-
-// RemoveStatusRule deletes a status rule from the workflow.
-func (s *Service) RemoveStatusRule(ctx context.Context, projectID, workflowID, ruleID uuid.UUID) error {
-	w, err := s.requireEditableOwnedWorkflow(ctx, projectID, workflowID)
-	if err != nil {
-		return err
-	}
-	r, err := s.repo.FindStatusRuleByID(ctx, ruleID)
-	if err != nil {
-		return err
-	}
-	if r.WorkflowID != w.ID {
-		return workflowdom.ErrStatusRuleNotFound
-	}
-	if err := s.repo.DeleteStatusRule(ctx, r.ID); err != nil {
-		return err
-	}
-	s.publish(ctx, events.TopicWorkflowStatusRuleRemoved, map[string]any{
-		"project_id":  projectID.String(),
-		"workflow_id": w.ID.String(),
-		"rule_id":     r.ID.String(),
 	})
 	return nil
 }
@@ -574,7 +415,11 @@ func (s *Service) SetStatusTransition(ctx context.Context, projectID, workflowID
 		}
 	}
 
-	// See SetStatusRule for why this loops at most twice.
+	// At most one retry: a concurrent SetStatusTransition call for the same
+	// status can create the row between our list below and our create
+	// further down; on that conflict, loop once more so the second pass
+	// finds and updates the now-existing row instead of surfacing a raw
+	// duplicate-key error from what is meant to behave as an upsert.
 	for attempt := 0; attempt < 2; attempt++ {
 		existing, err := s.repo.ListStatusTransitionsByWorkflow(ctx, w.ID)
 		if err != nil {

@@ -13,7 +13,7 @@ type Repository interface {
 	ListWorkflows(ctx context.Context, projectID uuid.UUID, status *Status) ([]*Workflow, error)
 	// UpdateWorkflow persists changes to name, description, and/or status.
 	UpdateWorkflow(ctx context.Context, w *Workflow) error
-	// DeleteWorkflow soft-deletes a workflow (cascades nodes/edges/rules via FK).
+	// DeleteWorkflow soft-deletes a workflow (cascades nodes/edges/transitions via FK).
 	DeleteWorkflow(ctx context.Context, id uuid.UUID) error
 
 	// LoadGraph returns the full node/rule/transition/edge set for a
@@ -27,12 +27,6 @@ type Repository interface {
 	// UpdateNode persists position changes.
 	UpdateNode(ctx context.Context, n *Node) error
 	DeleteNode(ctx context.Context, id uuid.UUID) error
-
-	CreateStatusRule(ctx context.Context, sr *StatusRule) error
-	FindStatusRuleByID(ctx context.Context, id uuid.UUID) (*StatusRule, error)
-	ListStatusRulesByWorkflow(ctx context.Context, workflowID uuid.UUID) ([]*StatusRule, error)
-	UpdateStatusRule(ctx context.Context, sr *StatusRule) error
-	DeleteStatusRule(ctx context.Context, id uuid.UUID) error
 
 	CreateStatusTransition(ctx context.Context, st *StatusTransition) error
 	FindStatusTransitionByID(ctx context.Context, id uuid.UUID) (*StatusTransition, error)

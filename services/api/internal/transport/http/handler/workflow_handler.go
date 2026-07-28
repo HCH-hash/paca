@@ -339,65 +339,6 @@ func (h *WorkflowHandler) RemoveWorkflowNode(w http.ResponseWriter, r *http.Requ
 	presenter.NoContent(w)
 }
 
-// --- Status rules -------------------------------------------------------------
-
-// SetWorkflowStatusRule handles POST .../workflows/:workflowId/status-rules.
-func (h *WorkflowHandler) SetWorkflowStatusRule(w http.ResponseWriter, r *http.Request) {
-	projectID, err := parseProjectID(r)
-	if err != nil {
-		presenter.Error(w, r, err)
-		return
-	}
-	workflowID, err := parseWorkflowID(r)
-	if err != nil {
-		presenter.Error(w, r, err)
-		return
-	}
-
-	var req dto.SetWorkflowStatusRuleRequest
-	if !middleware.BindJSON(w, r, &req) {
-		return
-	}
-	if req.StatusID == uuid.Nil || req.AssigneeMemberID == uuid.Nil {
-		presenter.Error(w, r, apierr.New(apierr.CodeBadRequest, "status_id and assignee_member_id are required"))
-		return
-	}
-
-	rule, err := h.svc.SetStatusRule(r.Context(), projectID, workflowID, workflowdom.SetStatusRuleInput{
-		StatusID:         req.StatusID,
-		AssigneeMemberID: req.AssigneeMemberID,
-	})
-	if err != nil {
-		presenter.Error(w, r, err)
-		return
-	}
-	presenter.Created(w, r, dto.StatusRuleFromEntity(rule))
-}
-
-// RemoveWorkflowStatusRule handles DELETE .../workflows/:workflowId/status-rules/:ruleId.
-func (h *WorkflowHandler) RemoveWorkflowStatusRule(w http.ResponseWriter, r *http.Request) {
-	projectID, err := parseProjectID(r)
-	if err != nil {
-		presenter.Error(w, r, err)
-		return
-	}
-	workflowID, err := parseWorkflowID(r)
-	if err != nil {
-		presenter.Error(w, r, err)
-		return
-	}
-	ruleID, err := parseWorkflowStatusRuleID(r)
-	if err != nil {
-		presenter.Error(w, r, err)
-		return
-	}
-	if err := h.svc.RemoveStatusRule(r.Context(), projectID, workflowID, ruleID); err != nil {
-		presenter.Error(w, r, err)
-		return
-	}
-	presenter.NoContent(w)
-}
-
 // --- Status transitions ("status workflow") --------------------------------
 
 // SetWorkflowStatusTransition handles POST .../workflows/:workflowId/status-transitions.
@@ -530,14 +471,6 @@ func parseWorkflowNodeID(r *http.Request) (uuid.UUID, error) {
 	id, err := uuid.Parse(chi.URLParam(r, "nodeId"))
 	if err != nil {
 		return uuid.Nil, apierr.New(apierr.CodeBadRequest, "invalid node id")
-	}
-	return id, nil
-}
-
-func parseWorkflowStatusRuleID(r *http.Request) (uuid.UUID, error) {
-	id, err := uuid.Parse(chi.URLParam(r, "ruleId"))
-	if err != nil {
-		return uuid.Nil, apierr.New(apierr.CodeBadRequest, "invalid status rule id")
 	}
 	return id, nil
 }

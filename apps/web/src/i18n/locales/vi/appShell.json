@@ -26,6 +26,8 @@
 		"agents": "Agent",
 		"conversations": "Hội thoại",
 		"automation": "Tự động hóa",
+		"automationWorkflow": "Quy trình",
+		"automationStatusRules": "Quy tắc trạng thái",
 		"team": "Đội nhóm",
 		"settings": "Cài đặt",
 		"changelog": "Có gì mới"

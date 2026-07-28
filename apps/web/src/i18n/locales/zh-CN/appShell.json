@@ -26,6 +26,8 @@
 		"agents": "智能体",
 		"conversations": "对话",
 		"automation": "自动化",
+		"automationWorkflow": "工作流",
+		"automationStatusRules": "状态规则",
 		"team": "团队",
 		"settings": "设置",
 		"changelog": "最新动态"

@@ -38,3 +38,5 @@ Paca is a single open-source monorepo with a small set of clearly separated runt
 For the shared sprint, backlog, and timeline view model, see [interaction-views.md](interaction-views.md).
 
 For the automation-workflow dependency graph and execution engine, see [automation-workflows.md](automation-workflows.md).
+
+For project-wide, filterable status→assignee automation, see [status-assignment-rules.md](status-assignment-rules.md).

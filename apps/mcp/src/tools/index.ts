@@ -3,6 +3,7 @@ import type {
 	PacaAPIClient,
 	PacaAPIDocClient,
 	PacaAPIExtendedClient,
+	PacaAPIStatusRuleClient,
 	PacaAPITaskExtendedClient,
 	PacaAPIViewsClient,
 	PacaAPIWorkflowClient,
@@ -27,6 +28,10 @@ import {
 } from "./member-tools.js";
 import { getProjectTools, handleProjectTool } from "./project-tools.js";
 import { getSprintTools, handleSprintTool } from "./sprint-tools.js";
+import {
+	getStatusRuleTools,
+	handleStatusRuleTool,
+} from "./status-rule-tools.js";
 import {
 	getTaskActivityTools,
 	handleTaskActivityTool,
@@ -64,6 +69,7 @@ export function getAllTools(): Tool[] {
 		...getTaskActivityTools(),
 		...getTaskLinkTools(),
 		...getWorkflowTools(),
+		...getStatusRuleTools(),
 		...getDocActivityTools(),
 	];
 }
@@ -81,6 +87,7 @@ export async function handleToolCall(
 		taskExtendedClient: PacaAPITaskExtendedClient;
 		docClient: PacaAPIDocClient;
 		workflowClient: PacaAPIWorkflowClient;
+		statusRuleClient: PacaAPIStatusRuleClient;
 	},
 ): Promise<any> {
 	const { name, arguments: args } = request.params;
@@ -230,6 +237,18 @@ export async function handleToolCall(
 			name === "delete_workflow"
 		) {
 			return handleWorkflowTool(name, args, clients.workflowClient);
+		}
+
+		// Status assignment rule tools — project-wide, filterable
+		// status->assignee automation, independent of any workflow.
+		if (
+			name === "list_status_assignment_rules" ||
+			name === "create_status_assignment_rule" ||
+			name === "update_status_assignment_rule" ||
+			name === "delete_status_assignment_rule" ||
+			name === "reorder_status_assignment_rules"
+		) {
+			return handleStatusRuleTool(name, args, clients.statusRuleClient);
 		}
 
 		// Document activity tools

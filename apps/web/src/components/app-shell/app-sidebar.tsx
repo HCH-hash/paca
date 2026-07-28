@@ -33,6 +33,7 @@ import {
 	Trash2,
 	Users,
 	Workflow,
+	Zap,
 } from "lucide-react";
 import {
 	type ComponentType,
@@ -872,7 +873,6 @@ const PROJECT_NAV_ITEMS = [
 		icon: MessageSquare,
 		labelKey: "nav.conversations",
 	},
-	{ segment: "automation", icon: Workflow, labelKey: "nav.automation" },
 	{ segment: "team", icon: Users, labelKey: "nav.team" },
 	{ segment: "settings", icon: Settings, labelKey: "nav.settings" },
 ] as const;
@@ -902,7 +902,6 @@ function ProjectNav() {
 const ANON_HIDDEN_SEGMENTS = new Set([
 	"agents",
 	"conversations",
-	"automation",
 	"team",
 	"settings",
 ]);
@@ -963,7 +962,8 @@ function ProjectNavItems({
 					<SidebarMenu>
 						{PROJECT_NAV_ITEMS.filter(
 							(item) => !isAnonymous || !ANON_HIDDEN_SEGMENTS.has(item.segment),
-						).map(({ segment, icon: Icon, labelKey }) => {
+						).map((item) => {
+							const { segment, icon: Icon, labelKey } = item;
 							const href = segment
 								? `/projects/${projectId}/${segment}`
 								: `/projects/${projectId}`;
@@ -1302,6 +1302,116 @@ function ProjectInteractionsSection({
 	);
 }
 
+// ── Project Automation Section ──────────────────────────────────────────────────
+/** Top-level "Automation" section (workflow builder + status assignment
+ * rules), styled and positioned like the Interactions/Documentation sections
+ * rather than nested as an expandable item inside the generic "Project" nav
+ * group. Hidden for anonymous visitors, matching the previous nested item's
+ * behavior. */
+function AutomationSidebarSection({
+	projectId,
+	isAnonymous,
+}: {
+	projectId: string;
+	isAnonymous?: boolean;
+}) {
+	const { t } = useTranslation("appShell");
+	const location = useRouterState({ select: (s) => s.location.pathname });
+	const [collapsed, setCollapsed] = useState(() => {
+		try {
+			return (
+				localStorage.getItem(
+					`paca:sidebar-automation-collapsed:${projectId}`,
+				) === "true"
+			);
+		} catch {
+			return false;
+		}
+	});
+
+	const toggle = () => {
+		setCollapsed((prev) => {
+			const next = !prev;
+			try {
+				localStorage.setItem(
+					`paca:sidebar-automation-collapsed:${projectId}`,
+					String(next),
+				);
+			} catch {
+				/* ignore */
+			}
+			return next;
+		});
+	};
+
+	if (isAnonymous) return null;
+
+	const workflowHref = `/projects/${projectId}/automation`;
+	const statusRulesHref = `/projects/${projectId}/automation/status-rules`;
+	// Both routes share the "/automation" prefix, so status rules must be
+	// checked first and excluded from the workflow match.
+	const isStatusRulesActive = location.startsWith(statusRulesHref);
+	const isWorkflowActive =
+		!isStatusRulesActive &&
+		(location === workflowHref || location.startsWith(`${workflowHref}/`));
+
+	return (
+		<SidebarGroup>
+			<SidebarGroupLabel
+				className="flex cursor-pointer items-center justify-between hover:text-sidebar-foreground transition-colors"
+				onClick={toggle}
+			>
+				<span>{t("nav.automation")}</span>
+				<ChevronRight
+					className={cn(
+						"size-3.5 transition-transform duration-200 text-sidebar-foreground/40",
+						!collapsed && "rotate-90",
+					)}
+				/>
+			</SidebarGroupLabel>
+
+			{!collapsed && (
+				<SidebarGroupContent>
+					<SidebarMenu>
+						<SidebarMenuItem>
+							<SidebarMenuButton
+								isActive={isWorkflowActive}
+								tooltip={t("nav.automationWorkflow")}
+								render={<Link to={workflowHref} />}
+								className={cn(
+									"relative transition-all duration-150",
+									isWorkflowActive
+										? "bg-primary/10 text-primary font-medium before:absolute before:left-0 before:inset-y-2 before:w-0.75 before:rounded-full before:bg-primary"
+										: "hover:bg-sidebar-accent/60",
+								)}
+							>
+								<Workflow className="size-4" />
+								<span>{t("nav.automationWorkflow")}</span>
+							</SidebarMenuButton>
+						</SidebarMenuItem>
+						<SidebarMenuItem>
+							<SidebarMenuButton
+								isActive={isStatusRulesActive}
+								tooltip={t("nav.automationStatusRules")}
+								render={<Link to={statusRulesHref} />}
+								className={cn(
+									"relative transition-all duration-150",
+									isStatusRulesActive
+										? "bg-primary/10 text-primary font-medium before:absolute before:left-0 before:inset-y-2 before:w-0.75 before:rounded-full before:bg-primary"
+										: "hover:bg-sidebar-accent/60",
+								)}
+							>
+								<Zap className="size-4" />
+								<span>{t("nav.automationStatusRules")}</span>
+							</SidebarMenuButton>
+						</SidebarMenuItem>
+					</SidebarMenu>
+				</SidebarGroupContent>
+			)}
+		</SidebarGroup>
+	);
+}
+
 // ── Theme Switcher ─────────────────────────────────────────────────────────────
 const THEME_MODES = [
 	{ mode: "light" as ThemeMode, Icon: Sun, labelKey: "theme.light" },
@@ -1449,6 +1559,11 @@ export function AppSidebar() {
 						/>
 						<SidebarSeparator />
 						<DocsSidebarSection projectId={projectId} />
+						<SidebarSeparator />
+						<AutomationSidebarSection
+							projectId={projectId}
+							isAnonymous={isAnonymous}
+						/>
 						<SidebarSeparator />
 						<ExtensionPoint
 							point="sidebar.project.section"

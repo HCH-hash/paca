@@ -24,9 +24,6 @@ type Service interface {
 	UpdateNode(ctx context.Context, projectID, workflowID, nodeID uuid.UUID, in UpdateNodeInput) (*Node, error)
 	RemoveNode(ctx context.Context, projectID, workflowID, nodeID uuid.UUID) error
 
-	SetStatusRule(ctx context.Context, projectID, workflowID uuid.UUID, in SetStatusRuleInput) (*StatusRule, error)
-	RemoveStatusRule(ctx context.Context, projectID, workflowID, ruleID uuid.UUID) error
-
 	SetStatusTransition(ctx context.Context, projectID, workflowID uuid.UUID, in SetStatusTransitionInput) (*StatusTransition, error)
 	RemoveStatusTransition(ctx context.Context, projectID, workflowID, transitionID uuid.UUID) error
 
@@ -76,15 +73,6 @@ type AddNodeInput struct {
 type UpdateNodeInput struct {
 	PosX *float64
 	PosY *float64
-}
-
-// SetStatusRuleInput carries the fields to create or update one of the
-// workflow's status->assignee rules. If a rule for StatusID already exists
-// on the workflow, its assignee is updated in place; otherwise a new rule
-// is created.
-type SetStatusRuleInput struct {
-	StatusID         uuid.UUID
-	AssigneeMemberID uuid.UUID
 }
 
 // SetStatusTransitionInput carries the fields to create or update one of the

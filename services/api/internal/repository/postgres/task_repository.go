@@ -430,6 +430,12 @@ const taskCols = `id, project_id, task_number, task_type_id, status_id, sprint_i
 // applyTaskFilter adds WHERE predicates for all TaskFilter fields.
 // b is the shared queryBuilder; the base "project_id = $1 AND deleted_at IS NULL" clause is already set.
 func applyTaskFilter(b *queryBuilder, filter taskdom.TaskFilter) {
+	if filter.TaskID != nil {
+		p := b.placeholder()
+		b.whereClauses = append(b.whereClauses, "id = "+p)
+		b.args = append(b.args, filter.TaskID.String())
+	}
+
 	switch {
 	case filter.ParentTaskID != nil:
 		p := b.placeholder()

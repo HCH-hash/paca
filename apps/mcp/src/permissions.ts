@@ -336,6 +336,36 @@ export const TOOL_PERMISSIONS: ToolPermission[] = [
 		permissionKey: "workflows.write",
 		requiresProject: true,
 	},
+
+	// Status assignment rule tools — project-wide, filterable
+	// status->assignee automation, independent of any workflow. Gated on
+	// tasks.* rather than a dedicated permission key, matching how
+	// task-statuses/custom-fields are gated.
+	{
+		toolName: "list_status_assignment_rules",
+		permissionKey: "tasks.read",
+		requiresProject: true,
+	},
+	{
+		toolName: "create_status_assignment_rule",
+		permissionKey: "tasks.write",
+		requiresProject: true,
+	},
+	{
+		toolName: "update_status_assignment_rule",
+		permissionKey: "tasks.write",
+		requiresProject: true,
+	},
+	{
+		toolName: "delete_status_assignment_rule",
+		permissionKey: "tasks.write",
+		requiresProject: true,
+	},
+	{
+		toolName: "reorder_status_assignment_rules",
+		permissionKey: "tasks.write",
+		requiresProject: true,
+	},
 ];
 
 export async function fetchAgentPermissions(

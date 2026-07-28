@@ -41,6 +41,7 @@ type Deps struct {
 	Agent                *handler.AgentHandler
 	Conversation         *handler.ConversationHandler
 	Workflow             *handler.WorkflowHandler
+	StatusRule           *handler.StatusRuleHandler
 	Log                  *slog.Logger
 	// CORSAllowedOrigins is the CORS allow-list — see corsMiddleware. A nil
 	// or empty slice (the zero value, so every existing caller of this
@@ -249,6 +250,28 @@ func New(deps Deps) http.Handler {
 						Put("/{statusId}/set-default", deps.Task.SetDefaultTaskStatus)
 				})
 
+				// Status assignment rules — project-wide, filterable
+				// status->assignee automation (independent of automation
+				// workflows), gated on the same tasks.* permissions as
+				// task-statuses/custom-fields rather than a dedicated key.
+				if deps.StatusRule != nil {
+					r.Route("/status-assignment-rules", func(r chi.Router) {
+						r.With(httpmw.RequirePublicProjectOrPermissions(deps.ProjectVisibilitySvc, deps.Authorizer,
+							httpmw.PermissionGroup{Scope: httpmw.GlobalScope(), Permissions: []authz.Permission{authz.PermissionProjectsRead}},
+							httpmw.PermissionGroup{Scope: httpmw.ProjectScopeFromParam("projectId"), Permissions: []authz.Permission{authz.PermissionTasksRead}},
+						)).Get("/", deps.StatusRule.ListRules)
+						r.With(httpmw.RequirePermissions(deps.Authorizer, httpmw.ProjectScopeFromParam("projectId"), authz.PermissionTasksWrite)).
+							Post("/", deps.StatusRule.CreateRule)
+						// Static /positions must be registered before /{ruleId}.
+						r.With(httpmw.RequirePermissions(deps.Authorizer, httpmw.ProjectScopeFromParam("projectId"), authz.PermissionTasksWrite)).
+							Put("/positions", deps.StatusRule.ReorderRules)
+						r.With(httpmw.RequirePermissions(deps.Authorizer, httpmw.ProjectScopeFromParam("projectId"), authz.PermissionTasksWrite)).
+							Patch("/{ruleId}", deps.StatusRule.UpdateRule)
+						r.With(httpmw.RequirePermissions(deps.Authorizer, httpmw.ProjectScopeFromParam("projectId"), authz.PermissionTasksWrite)).
+							Delete("/{ruleId}", deps.StatusRule.DeleteRule)
+					})
+				}
+
 				// Automation workflows
 				if deps.Workflow != nil {
 					r.Route("/workflows", func(r chi.Router) {
@@ -275,11 +298,6 @@ func New(deps Deps) http.Handler {
 							Patch("/{workflowId}/nodes/{nodeId}", deps.Workflow.UpdateWorkflowNode)
 						r.With(httpmw.RequirePermissions(deps.Authorizer, httpmw.ProjectScopeFromParam("projectId"), authz.PermissionWorkflowsWrite)).
 							Delete("/{workflowId}/nodes/{nodeId}", deps.Workflow.RemoveWorkflowNode)
-
-						r.With(httpmw.RequirePermissions(deps.Authorizer, httpmw.ProjectScopeFromParam("projectId"), authz.PermissionWorkflowsWrite)).
-							Post("/{workflowId}/status-rules", deps.Workflow.SetWorkflowStatusRule)
-						r.With(httpmw.RequirePermissions(deps.Authorizer, httpmw.ProjectScopeFromParam("projectId"), authz.PermissionWorkflowsWrite)).
-							Delete("/{workflowId}/status-rules/{ruleId}", deps.Workflow.RemoveWorkflowStatusRule)
 
 						r.With(httpmw.RequirePermissions(deps.Authorizer, httpmw.ProjectScopeFromParam("projectId"), authz.PermissionWorkflowsWrite)).
 							Post("/{workflowId}/status-transitions", deps.Workflow.SetWorkflowStatusTransition)

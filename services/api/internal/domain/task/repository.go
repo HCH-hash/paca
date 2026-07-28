@@ -105,6 +105,12 @@ type TaskSort struct {
 
 // TaskFilter carries optional criteria for listing tasks.
 type TaskFilter struct {
+	// TaskID, when non-nil, restricts results to this exact task — ANDed
+	// with every other criterion below rather than replacing them, so it
+	// can be used as a single-task "does this task match the rest of this
+	// filter" check (see statusrulesvc.ApplyMatchingRule) without
+	// duplicating filter-evaluation logic outside SQL.
+	TaskID       *uuid.UUID
 	SprintID     *uuid.UUID  // single-value compat; ignored when SprintIDs is non-empty
 	SprintIDs    []uuid.UUID // multi-value; takes priority over SprintID and BacklogOnly
 	StatusID     *uuid.UUID  // single-value compat; ignored when StatusIDs is non-empty

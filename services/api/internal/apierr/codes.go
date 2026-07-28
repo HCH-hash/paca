@@ -317,12 +317,6 @@ const (
 	CodeWorkflowNodeDuplicateTask Code = "WORKFLOW_NODE_DUPLICATE_TASK"
 	// CodeWorkflowNodeTaskCrossProject indicates the task does not belong to the workflow's project.
 	CodeWorkflowNodeTaskCrossProject Code = "WORKFLOW_NODE_TASK_CROSS_PROJECT"
-	// CodeWorkflowStatusRuleNotFound indicates the requested status rule does not exist.
-	CodeWorkflowStatusRuleNotFound Code = "WORKFLOW_STATUS_RULE_NOT_FOUND"
-	// CodeWorkflowStatusRuleCrossProject indicates the status or member does not belong to the workflow's project.
-	CodeWorkflowStatusRuleCrossProject Code = "WORKFLOW_STATUS_RULE_CROSS_PROJECT"
-	// CodeWorkflowStatusRuleConflict indicates a concurrent request already set this status rule.
-	CodeWorkflowStatusRuleConflict Code = "WORKFLOW_STATUS_RULE_CONFLICT"
 	// CodeWorkflowStatusTransitionNotFound indicates the requested status transition does not exist.
 	CodeWorkflowStatusTransitionNotFound Code = "WORKFLOW_STATUS_TRANSITION_NOT_FOUND"
 	// CodeWorkflowStatusTransitionCrossProject indicates the status does not belong to the workflow's project.
@@ -353,8 +347,21 @@ const (
 	CodeWorkflowActivateDoneStatusUndetermined Code = "WORKFLOW_ACTIVATE_DONE_STATUS_UNDETERMINED"
 	// CodeWorkflowActivateTaskMissing indicates a node references a task that no longer exists in the project.
 	CodeWorkflowActivateTaskMissing Code = "WORKFLOW_ACTIVATE_TASK_MISSING"
-	// CodeWorkflowActivateNoStatusRules indicates the workflow has no status rules, so activating it would never reassign anything.
-	CodeWorkflowActivateNoStatusRules Code = "WORKFLOW_ACTIVATE_NO_STATUS_RULES"
+
+	// --- Status assignment rule errors ---------------------------------------
+
+	// CodeStatusRuleNotFound indicates the requested status assignment rule does not exist.
+	CodeStatusRuleNotFound Code = "STATUS_RULE_NOT_FOUND"
+	// CodeStatusRuleNameInvalid indicates an empty or invalid rule name.
+	CodeStatusRuleNameInvalid Code = "STATUS_RULE_NAME_INVALID"
+	// CodeStatusRuleCrossProject indicates the status or member does not belong to the rule's project.
+	CodeStatusRuleCrossProject Code = "STATUS_RULE_CROSS_PROJECT"
+	// CodeStatusRuleFilterUnknownCustomField indicates the rule's filter references a custom field that does not exist in this project.
+	CodeStatusRuleFilterUnknownCustomField Code = "STATUS_RULE_FILTER_UNKNOWN_CUSTOM_FIELD"
+	// CodeStatusRuleReorderInvalid indicates the provided rule IDs do not match the status's existing rules.
+	CodeStatusRuleReorderInvalid Code = "STATUS_RULE_REORDER_INVALID"
+	// CodeTaskStatusInUseByStatusRule indicates a task status cannot be deleted because a status assignment rule still targets it.
+	CodeTaskStatusInUseByStatusRule Code = "TASK_STATUS_IN_USE_BY_STATUS_RULE"
 )
 
 // Error carries a machine-readable Code alongside a human-readable Message.

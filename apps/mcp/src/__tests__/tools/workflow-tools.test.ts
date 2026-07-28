@@ -41,17 +41,6 @@ function makeEdge(id: string, sourceNodeId: string, targetNodeId: string) {
 	};
 }
 
-function makeRule(id: string, statusId: string, assigneeMemberId: string) {
-	return {
-		id,
-		workflow_id: "wf1",
-		status_id: statusId,
-		assignee_member_id: assigneeMemberId,
-		created_at: "2024-01-01T00:00:00Z",
-		updated_at: "2024-01-01T00:00:00Z",
-	};
-}
-
 function makeTransition(
 	id: string,
 	statusId: string,
@@ -72,7 +61,6 @@ function makeGraph(
 		workflow: any;
 		nodes: any[];
 		edges: any[];
-		status_rules: any[];
 		status_transitions: any[];
 	}> = {},
 ) {
@@ -80,7 +68,6 @@ function makeGraph(
 		workflow: overrides.workflow ?? workflow,
 		nodes: overrides.nodes ?? [],
 		edges: overrides.edges ?? [],
-		status_rules: overrides.status_rules ?? [],
 		status_transitions: overrides.status_transitions ?? [],
 	};
 }
@@ -120,18 +107,6 @@ function makeWorkflowClient(overrides: Record<string, any> = {}) {
 					Promise.resolve({ ...makeNode(nodeId, "unknown"), ...input }),
 			),
 		removeWorkflowNode: vi.fn().mockResolvedValue(undefined),
-		setWorkflowStatusRule: vi
-			.fn()
-			.mockImplementation((_p: string, _w: string, input: any) =>
-				Promise.resolve(
-					makeRule(
-						`r-${input.status_id}`,
-						input.status_id,
-						input.assignee_member_id,
-					),
-				),
-			),
-		removeWorkflowStatusRule: vi.fn().mockResolvedValue(undefined),
 		setWorkflowStatusTransition: vi
 			.fn()
 			.mockImplementation((_p: string, _w: string, input: any) =>
@@ -272,14 +247,13 @@ describe("handleWorkflowTool - create_workflow", () => {
 			description: undefined,
 		});
 		expect(client.addWorkflowNode).not.toHaveBeenCalled();
-		expect(client.setWorkflowStatusRule).not.toHaveBeenCalled();
 		expect(client.setWorkflowStatusTransition).not.toHaveBeenCalled();
 		expect(client.addWorkflowEdge).not.toHaveBeenCalled();
 		expect(client.activateWorkflow).not.toHaveBeenCalled();
 		expect(result.content[0].text).toContain("Created draft workflow");
 	});
 
-	it("builds nodes, status rules, status transitions, and edges in one call", async () => {
+	it("builds nodes, status transitions, and edges in one call", async () => {
 		const client = makeWorkflowClient();
 		const result = await handleWorkflowTool(
 			"create_workflow",
@@ -290,7 +264,6 @@ describe("handleWorkflowTool - create_workflow", () => {
 					{ taskId: "t1", posX: 1, posY: 2 },
 					{ taskId: "t2", posX: 400, posY: 0 },
 				],
-				statusRules: [{ statusId: "s-ready", assigneeMemberId: "m1" }],
 				statusTransitions: [{ statusId: "s-ready", nextStatusId: "s-done" }],
 				edges: [{ sourceTaskId: "t1", targetTaskId: "t2" }],
 			},
@@ -306,10 +279,6 @@ describe("handleWorkflowTool - create_workflow", () => {
 			task_id: "t2",
 			pos_x: 400,
 			pos_y: 0,
-		});
-		expect(client.setWorkflowStatusRule).toHaveBeenCalledWith("p1", "wf1", {
-			status_id: "s-ready",
-			assignee_member_id: "m1",
 		});
 		expect(client.setWorkflowStatusTransition).toHaveBeenCalledWith(
 			"p1",
@@ -795,53 +764,7 @@ describe("handleWorkflowTool - update_workflow nodes", () => {
 // update_workflow - status rules / transitions
 // ---------------------------------------------------------------------------
 
-describe("handleWorkflowTool - update_workflow status rules and transitions", () => {
-	it("sets a status rule", async () => {
-		const client = makeWorkflowClient({
-			getWorkflow: vi.fn().mockResolvedValue(makeGraph()),
-		});
-		const result = await handleWorkflowTool(
-			"update_workflow",
-			{
-				projectId: "p1",
-				workflowId: "wf1",
-				statusRules: {
-					set: [{ statusId: "s-ready", assigneeMemberId: "m1" }],
-				},
-			},
-			client,
-		);
-		expect(client.setWorkflowStatusRule).toHaveBeenCalledWith("p1", "wf1", {
-			status_id: "s-ready",
-			assignee_member_id: "m1",
-		});
-		expect(result.content[0].text).toContain("Status rules set");
-	});
-
-	it("removes a status rule by statusId", async () => {
-		const client = makeWorkflowClient({
-			getWorkflow: vi
-				.fn()
-				.mockResolvedValue(
-					makeGraph({ status_rules: [makeRule("r1", "s-ready", "m1")] }),
-				),
-		});
-		await handleWorkflowTool(
-			"update_workflow",
-			{
-				projectId: "p1",
-				workflowId: "wf1",
-				statusRules: { remove: ["s-ready"] },
-			},
-			client,
-		);
-		expect(client.removeWorkflowStatusRule).toHaveBeenCalledWith(
-			"p1",
-			"wf1",
-			"r1",
-		);
-	});
-
+describe("handleWorkflowTool - update_workflow status transitions", () => {
 	it("sets a status transition", async () => {
 		const client = makeWorkflowClient({
 			getWorkflow: vi.fn().mockResolvedValue(makeGraph()),

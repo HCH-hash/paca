@@ -36,15 +36,6 @@ type workflowNodeRecord struct {
 	UpdatedAt  time.Time `db:"updated_at"`
 }
 
-type workflowStatusRuleRecord struct {
-	ID               string    `db:"id"`
-	WorkflowID       string    `db:"workflow_id"`
-	StatusID         string    `db:"status_id"`
-	AssigneeMemberID string    `db:"assignee_member_id"`
-	CreatedAt        time.Time `db:"created_at"`
-	UpdatedAt        time.Time `db:"updated_at"`
-}
-
 type workflowStatusTransitionRecord struct {
 	ID           string    `db:"id"`
 	WorkflowID   string    `db:"workflow_id"`
@@ -177,7 +168,7 @@ func (r *WorkflowRepository) DeleteWorkflow(ctx context.Context, id uuid.UUID) e
 
 // --- Graph ----------------------------------------------------------------
 
-// LoadGraph returns a workflow's full node/rule/transition/edge set.
+// LoadGraph returns a workflow's full node/transition/edge set.
 func (r *WorkflowRepository) LoadGraph(ctx context.Context, workflowID uuid.UUID) (*workflowdom.Graph, error) {
 	w, err := r.FindWorkflowByID(ctx, workflowID)
 	if err != nil {
@@ -191,10 +182,6 @@ func (r *WorkflowRepository) LoadGraph(ctx context.Context, workflowID uuid.UUID
 	if err != nil {
 		return nil, err
 	}
-	rules, err := r.ListStatusRulesByWorkflow(ctx, workflowID)
-	if err != nil {
-		return nil, err
-	}
 	transitions, err := r.ListStatusTransitionsByWorkflow(ctx, workflowID)
 	if err != nil {
 		return nil, err
@@ -203,7 +190,6 @@ func (r *WorkflowRepository) LoadGraph(ctx context.Context, workflowID uuid.UUID
 	return &workflowdom.Graph{
 		Workflow:          w,
 		Nodes:             nodes,
-		StatusRules:       rules,
 		StatusTransitions: transitions,
 		Edges:             edges,
 	}, nil
@@ -288,88 +274,6 @@ func (r *WorkflowRepository) DeleteNode(ctx context.Context, id uuid.UUID) error
 	n, _ := res.RowsAffected()
 	if n == 0 {
 		return workflowdom.ErrNodeNotFound
-	}
-	return nil
-}
-
-// --- Status rules -------------------------------------------------------------
-
-// CreateStatusRule persists a new workflow status rule.
-func (r *WorkflowRepository) CreateStatusRule(ctx context.Context, sr *workflowdom.StatusRule) error {
-	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO workflow_status_rules (id, workflow_id, status_id, assignee_member_id, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6)`,
-		sr.ID.String(), sr.WorkflowID.String(), sr.StatusID.String(), sr.AssigneeMemberID.String(), sr.CreatedAt, sr.UpdatedAt,
-	)
-	if err != nil {
-		if isUniqueViolation(err) {
-			return workflowdom.ErrStatusRuleConflict
-		}
-		return fmt.Errorf("workflow repo: create status rule: %w", err)
-	}
-	return nil
-}
-
-// FindStatusRuleByID fetches a status rule by its ID.
-func (r *WorkflowRepository) FindStatusRuleByID(ctx context.Context, id uuid.UUID) (*workflowdom.StatusRule, error) {
-	const q = `
-		SELECT id, workflow_id, status_id, assignee_member_id, created_at, updated_at
-		FROM workflow_status_rules WHERE id = $1`
-	var rec workflowStatusRuleRecord
-	if err := r.db.GetContext(ctx, &rec, q, id.String()); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, workflowdom.ErrStatusRuleNotFound
-		}
-		return nil, err
-	}
-	return rec.toDomain()
-}
-
-// ListStatusRulesByWorkflow returns all status rules belonging to a workflow.
-func (r *WorkflowRepository) ListStatusRulesByWorkflow(ctx context.Context, workflowID uuid.UUID) ([]*workflowdom.StatusRule, error) {
-	const q = `
-		SELECT id, workflow_id, status_id, assignee_member_id, created_at, updated_at
-		FROM workflow_status_rules WHERE workflow_id = $1 ORDER BY created_at ASC`
-	var recs []workflowStatusRuleRecord
-	if err := r.db.SelectContext(ctx, &recs, q, workflowID.String()); err != nil {
-		return nil, err
-	}
-	out := make([]*workflowdom.StatusRule, 0, len(recs))
-	for i := range recs {
-		sr, err := recs[i].toDomain()
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, sr)
-	}
-	return out, nil
-}
-
-// UpdateStatusRule persists changes to a status rule's assignee.
-func (r *WorkflowRepository) UpdateStatusRule(ctx context.Context, sr *workflowdom.StatusRule) error {
-	res, err := r.db.ExecContext(ctx, `
-		UPDATE workflow_status_rules SET assignee_member_id = $1, updated_at = $2 WHERE id = $3`,
-		sr.AssigneeMemberID.String(), sr.UpdatedAt, sr.ID.String(),
-	)
-	if err != nil {
-		return fmt.Errorf("workflow repo: update status rule: %w", err)
-	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return workflowdom.ErrStatusRuleNotFound
-	}
-	return nil
-}
-
-// DeleteStatusRule removes a status rule.
-func (r *WorkflowRepository) DeleteStatusRule(ctx context.Context, id uuid.UUID) error {
-	res, err := r.db.ExecContext(ctx, `DELETE FROM workflow_status_rules WHERE id = $1`, id.String())
-	if err != nil {
-		return fmt.Errorf("workflow repo: delete status rule: %w", err)
-	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return workflowdom.ErrStatusRuleNotFound
 	}
 	return nil
 }
@@ -602,15 +506,13 @@ func (r *WorkflowRepository) ListIncomingEdges(ctx context.Context, targetNodeID
 }
 
 // StatusUsedByWorkflow reports whether statusID is referenced by any
-// workflow's status rules or status transitions (as either the current or
-// the next status), regardless of the workflow's lifecycle status — an
-// archived workflow can be reverted to draft and reactivated, so a status it
-// depends on must not be deletable out from under it.
+// workflow's status-transition chain (as either the current or the next
+// status), regardless of the workflow's lifecycle status — an archived
+// workflow can be reverted to draft and reactivated, so a status it depends
+// on must not be deletable out from under it.
 func (r *WorkflowRepository) StatusUsedByWorkflow(ctx context.Context, statusID uuid.UUID) (bool, error) {
 	const q = `
 		SELECT EXISTS (
-			SELECT 1 FROM workflow_status_rules WHERE status_id = $1
-			UNION ALL
 			SELECT 1 FROM workflow_status_transitions WHERE status_id = $1 OR next_status_id = $1
 		)`
 	var used bool
@@ -677,33 +579,6 @@ func (rec *workflowNodeRecord) toDomain() (*workflowdom.Node, error) {
 		PosY:       rec.PosY,
 		CreatedAt:  rec.CreatedAt,
 		UpdatedAt:  rec.UpdatedAt,
-	}, nil
-}
-
-func (rec *workflowStatusRuleRecord) toDomain() (*workflowdom.StatusRule, error) {
-	id, err := uuid.Parse(rec.ID)
-	if err != nil {
-		return nil, err
-	}
-	workflowID, err := uuid.Parse(rec.WorkflowID)
-	if err != nil {
-		return nil, err
-	}
-	statusID, err := uuid.Parse(rec.StatusID)
-	if err != nil {
-		return nil, err
-	}
-	assigneeID, err := uuid.Parse(rec.AssigneeMemberID)
-	if err != nil {
-		return nil, err
-	}
-	return &workflowdom.StatusRule{
-		ID:               id,
-		WorkflowID:       workflowID,
-		StatusID:         statusID,
-		AssigneeMemberID: assigneeID,
-		CreatedAt:        rec.CreatedAt,
-		UpdatedAt:        rec.UpdatedAt,
 	}, nil
 }
 

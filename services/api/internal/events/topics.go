@@ -125,9 +125,10 @@ const (
 	// --- Automation workflow events ------------------------------------------
 	// Published directly to ChannelRealtime by workflowsvc.Service whenever a
 	// workflow's graph or lifecycle changes, so every connected client viewing
-	// that project's automation builder stays in sync. Note: workflow.assigned
-	// (the automation engine reassigning a task) is a separate, task-scoped
-	// event defined as taskdom.ActivityTypeWorkflowAssigned, not here.
+	// that project's automation builder stays in sync. Note: reassignment by
+	// the status-assignment-rule engine (which a workflow's predecessor-done
+	// cascade can trigger) is a separate, task-scoped, project-wide event
+	// defined as taskdom.ActivityTypeStatusRuleAssigned, not here.
 	TopicWorkflowCreated                 = "workflow.created"
 	TopicWorkflowUpdated                 = "workflow.updated"
 	TopicWorkflowDeleted                 = "workflow.deleted"
@@ -139,8 +140,6 @@ const (
 	TopicWorkflowNodeRemoved             = "workflow.node.removed"
 	TopicWorkflowEdgeAdded               = "workflow.edge.added"
 	TopicWorkflowEdgeRemoved             = "workflow.edge.removed"
-	TopicWorkflowStatusRuleSet           = "workflow.status_rule.set"
-	TopicWorkflowStatusRuleRemoved       = "workflow.status_rule.removed"
 	TopicWorkflowStatusTransitionSet     = "workflow.status_transition.set"
 	TopicWorkflowStatusTransitionRemoved = "workflow.status_transition.removed"
 )

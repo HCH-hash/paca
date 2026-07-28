@@ -3,7 +3,6 @@ import type {
 	AddWorkflowNodeInput,
 	CreateWorkflowInput,
 	PacaConfig,
-	SetWorkflowStatusRuleInput,
 	SetWorkflowStatusTransitionInput,
 	SuccessEnvelope,
 	UpdateWorkflowInput,
@@ -13,7 +12,6 @@ import type {
 	WorkflowGraph,
 	WorkflowNode,
 	WorkflowStatus,
-	WorkflowStatusRule,
 	WorkflowStatusTransition,
 } from "../types/index.js";
 
@@ -201,29 +199,6 @@ export class PacaAPIWorkflowClient {
 	): Promise<void> {
 		await this.delete(
 			`/api/v1/projects/${projectId}/workflows/${workflowId}/nodes/${nodeId}`,
-		);
-	}
-
-	// ==================== Workflow Status Rules ====================
-
-	async setWorkflowStatusRule(
-		projectId: string,
-		workflowId: string,
-		input: SetWorkflowStatusRuleInput,
-	): Promise<WorkflowStatusRule> {
-		return this.post(
-			`/api/v1/projects/${projectId}/workflows/${workflowId}/status-rules`,
-			input,
-		);
-	}
-
-	async removeWorkflowStatusRule(
-		projectId: string,
-		workflowId: string,
-		ruleId: string,
-	): Promise<void> {
-		await this.delete(
-			`/api/v1/projects/${projectId}/workflows/${workflowId}/status-rules/${ruleId}`,
 		);
 	}
 

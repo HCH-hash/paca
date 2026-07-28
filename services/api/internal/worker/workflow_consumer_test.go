@@ -28,18 +28,10 @@ func isAssignedOnlyTo(t *taskdom.Task, member uuid.UUID) bool {
 type fakeGraphStore struct {
 	workflows   map[uuid.UUID]*workflowdom.Workflow
 	nodes       map[uuid.UUID]*workflowdom.Node
-	rules       map[uuid.UUID][]*workflowdom.StatusRule       // keyed by workflow ID
 	transitions map[uuid.UUID][]*workflowdom.StatusTransition // keyed by workflow ID
 	edges       []*workflowdom.Edge
 
 	transitionsCalls int // counts real ListStatusTransitionsByWorkflow calls, to assert evalCache hits
-	rulesCalls       int // counts real ListStatusRulesByWorkflow calls, to prove rules are re-read fresh (not cached) across an event's fan-out
-
-	// afterListStatusRulesCall, if non-nil, runs synchronously right after
-	// each ListStatusRulesByWorkflow call returns, receiving the 1-based
-	// call count — used to simulate a concurrent SetStatusRule edit landing
-	// mid-fan-out (between two nodes of the same event evaluating rules).
-	afterListStatusRulesCall func(call int)
 
 	findWorkflowCalls int
 	// archiveAfterFindWorkflowCall, if non-zero, flips every workflow to
@@ -53,7 +45,6 @@ func newFakeGraphStore() *fakeGraphStore {
 	return &fakeGraphStore{
 		workflows:   make(map[uuid.UUID]*workflowdom.Workflow),
 		nodes:       make(map[uuid.UUID]*workflowdom.Node),
-		rules:       make(map[uuid.UUID][]*workflowdom.StatusRule),
 		transitions: make(map[uuid.UUID][]*workflowdom.StatusTransition),
 	}
 }
@@ -92,23 +83,6 @@ func (f *fakeGraphStore) ListActiveNodesByTaskID(_ context.Context, taskID uuid.
 	return out, nil
 }
 
-func (f *fakeGraphStore) ListStatusRulesByWorkflow(_ context.Context, workflowID uuid.UUID) ([]*workflowdom.StatusRule, error) {
-	f.rulesCalls++
-	rules := f.rules[workflowID]
-	// Snapshot each rule, same as FindWorkflowByID above: a later mutation to
-	// the underlying rule (simulating a concurrent SetStatusRule edit) must
-	// not retroactively change what an earlier call already returned.
-	out := make([]*workflowdom.StatusRule, len(rules))
-	for i, r := range rules {
-		cp := *r
-		out[i] = &cp
-	}
-	if f.afterListStatusRulesCall != nil {
-		f.afterListStatusRulesCall(f.rulesCalls)
-	}
-	return out, nil
-}
-
 func (f *fakeGraphStore) ListStatusTransitionsByWorkflow(_ context.Context, workflowID uuid.UUID) ([]*workflowdom.StatusTransition, error) {
 	f.transitionsCalls++
 	return f.transitions[workflowID], nil
@@ -134,7 +108,8 @@ func (f *fakeGraphStore) ListIncomingEdges(_ context.Context, targetNodeID uuid.
 	return out, nil
 }
 
-// fakeTaskStore implements both workflowTaskReader and workflowTaskUpdater.
+// fakeTaskStore implements both workflowTaskReader and the task-update
+// surface the fakeRuleApplier below delegates to.
 type fakeTaskStore struct {
 	tasks       map[uuid.UUID]*taskdom.Task
 	statuses    map[uuid.UUID]*taskdom.TaskStatus
@@ -178,10 +153,41 @@ func (f *fakeTaskStore) UpdateTask(_ context.Context, _, id uuid.UUID, in taskdo
 	return &cp, nil
 }
 
-type fakeActivityRecorder struct{ calls int }
+// fakeRuleApplier is a minimal stand-in for statusrulesvc.Service, the real
+// implementation of the statusRuleApplier interface WorkflowConsumer calls
+// once an edge's AND-join is satisfied (event 2: "predecessor done"). Real
+// filter-matching/priority resolution is entirely statusrulesvc's concern
+// now (tested there) — this fake only needs a single unfiltered
+// statusID->memberID mapping to exercise WHEN/WHETHER WorkflowConsumer calls
+// it, mirroring the real service's "mutate task in place + persist via
+// UpdateTask" contract so existing assertions on f.tasks keep working.
+type fakeRuleApplier struct {
+	tasks *fakeTaskStore
+	rules map[uuid.UUID]uuid.UUID // statusID -> memberID
+	calls int
+}
 
-func (f *fakeActivityRecorder) RecordActivity(_ context.Context, _ taskdom.RecordActivityInput) error {
+func newFakeRuleApplier(tasks *fakeTaskStore) *fakeRuleApplier {
+	return &fakeRuleApplier{tasks: tasks, rules: make(map[uuid.UUID]uuid.UUID)}
+}
+
+func (f *fakeRuleApplier) ApplyMatchingRule(ctx context.Context, projectID uuid.UUID, task *taskdom.Task, _ string, _ map[string]any) error {
 	f.calls++
+	if task.StatusID == nil {
+		return nil
+	}
+	member, ok := f.rules[*task.StatusID]
+	if !ok {
+		return nil
+	}
+	if len(task.AssigneeIDs) == 1 && task.AssigneeIDs[0] == member {
+		return nil // idempotent no-op, mirrors the real service
+	}
+	newIDs := []uuid.UUID{member}
+	if _, err := f.tasks.UpdateTask(ctx, projectID, task.ID, taskdom.UpdateTaskInput{AssigneeIDs: &newIDs}); err != nil {
+		return err
+	}
+	task.AssigneeIDs = newIDs
 	return nil
 }
 
@@ -190,10 +196,10 @@ func (f *fakeActivityRecorder) RecordActivity(_ context.Context, _ taskdom.Recor
 // ---------------------------------------------------------------------------
 
 type engineFixture struct {
-	graph    *fakeGraphStore
-	tasks    *fakeTaskStore
-	activity *fakeActivityRecorder
-	consumer *WorkflowConsumer
+	graph       *fakeGraphStore
+	tasks       *fakeTaskStore
+	ruleApplier *fakeRuleApplier
+	consumer    *WorkflowConsumer
 
 	projectID uuid.UUID
 	doneStatus,
@@ -203,7 +209,7 @@ type engineFixture struct {
 func newEngineFixture() *engineFixture {
 	graph := newFakeGraphStore()
 	tasks := newFakeTaskStore()
-	activity := &fakeActivityRecorder{}
+	ruleApplier := newFakeRuleApplier(tasks)
 	projectID := uuid.New()
 
 	doneStatus := &taskdom.TaskStatus{ID: uuid.New(), ProjectID: projectID, Name: "Done", Category: taskdom.StatusCategoryDone}
@@ -214,15 +220,14 @@ func newEngineFixture() *engineFixture {
 	return &engineFixture{
 		graph:       graph,
 		tasks:       tasks,
-		activity:    activity,
+		ruleApplier: ruleApplier,
 		projectID:   projectID,
 		doneStatus:  doneStatus,
 		readyStatus: readyStatus,
 		consumer: &WorkflowConsumer{
 			workflowRepo: graph,
 			taskRepo:     tasks,
-			taskSvc:      tasks,
-			activityRec:  activity,
+			ruleApplier:  ruleApplier,
 			log:          discardLogger(),
 		},
 	}
@@ -242,10 +247,11 @@ func (f *engineFixture) addNode(w *workflowdom.Workflow, statusID *uuid.UUID) (*
 	return node, task
 }
 
-func (f *engineFixture) addRule(w *workflowdom.Workflow, statusID, memberID uuid.UUID) {
-	f.graph.rules[w.ID] = append(f.graph.rules[w.ID], &workflowdom.StatusRule{
-		ID: uuid.New(), WorkflowID: w.ID, StatusID: statusID, AssigneeMemberID: memberID,
-	})
+// addRule registers the fake rule-engine's stand-in for a single, unfiltered
+// project-wide status-assignment rule: statusID -> memberID. Real rules are
+// project-scoped, not workflow-scoped, so this takes no workflow argument.
+func (f *engineFixture) addRule(statusID, memberID uuid.UUID) {
+	f.ruleApplier.rules[statusID] = memberID
 }
 
 // addTransition sets, for the workflow as a whole, what status comes next
@@ -266,46 +272,14 @@ func (f *engineFixture) addEdge(w *workflowdom.Workflow, source, target *workflo
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
-
-func TestApplyNode_EventOne_DirectStatusRule(t *testing.T) {
-	f := newEngineFixture()
-	ctx := context.Background()
-	w := f.addWorkflow()
-	member := uuid.New()
-
-	_, task := f.addNode(w, &f.doneStatus.ID)
-	f.addRule(w, f.doneStatus.ID, member)
-
-	if err := f.consumer.processTaskStatusChange(ctx, f.projectID, task.ID); err != nil {
-		t.Fatalf("processTaskStatusChange: %v", err)
-	}
-
-	got := f.tasks.tasks[task.ID]
-	if !isAssignedOnlyTo(got, member) {
-		t.Fatalf("expected task assigned to %v, got %+v", member, got.AssigneeIDs)
-	}
-	if f.tasks.updateCalls != 1 {
-		t.Fatalf("expected exactly 1 UpdateTask call, got %d", f.tasks.updateCalls)
-	}
-}
-
-func TestApplyNode_EventOne_IdempotentWhenAlreadyAssigned(t *testing.T) {
-	f := newEngineFixture()
-	ctx := context.Background()
-	w := f.addWorkflow()
-	member := uuid.New()
-
-	_, task := f.addNode(w, &f.doneStatus.ID)
-	f.addRule(w, f.doneStatus.ID, member)
-	task.AssigneeIDs = []uuid.UUID{member} // already assigned before the event fires
-
-	if err := f.consumer.processTaskStatusChange(ctx, f.projectID, task.ID); err != nil {
-		t.Fatalf("processTaskStatusChange: %v", err)
-	}
-	if f.tasks.updateCalls != 0 {
-		t.Fatalf("expected no UpdateTask call when already assigned, got %d", f.tasks.updateCalls)
-	}
-}
+//
+// Reassignment triggered directly by a task's own status change ("event 1")
+// no longer belongs to WorkflowConsumer at all — it's handled by the
+// separate, project-wide StatusRuleConsumer regardless of workflow/node
+// membership. What remains here is "event 2" (predecessor done): once a
+// node's task reaches its workflow's derived done status, downstream nodes
+// across outgoing edges are re-evaluated against the injected
+// statusRuleApplier.
 
 func TestChain_SinglePredecessor_AssignsDownstreamOnDone(t *testing.T) {
 	f := newEngineFixture()
@@ -316,7 +290,7 @@ func TestChain_SinglePredecessor_AssignsDownstreamOnDone(t *testing.T) {
 	nodeA, taskA := f.addNode(w, &f.doneStatus.ID)
 	nodeB, taskB := f.addNode(w, &f.readyStatus.ID)
 	f.addTransition(w, f.doneStatus.ID, nil) // doneStatus is this workflow's terminal/done status
-	f.addRule(w, f.readyStatus.ID, downstreamMember)
+	f.addRule(f.readyStatus.ID, downstreamMember)
 	f.addEdge(w, nodeA, nodeB)
 
 	if err := f.consumer.processTaskStatusChange(ctx, f.projectID, taskA.ID); err != nil {
@@ -339,7 +313,7 @@ func TestDiamond_ANDJoin_WaitsForAllPredecessors(t *testing.T) {
 	nodeB, taskB := f.addNode(w, &f.readyStatus.ID)
 	nodeC, taskC := f.addNode(w, &f.readyStatus.ID)
 	f.addTransition(w, f.doneStatus.ID, nil) // doneStatus is this workflow's terminal/done status
-	f.addRule(w, f.readyStatus.ID, downstreamMember)
+	f.addRule(f.readyStatus.ID, downstreamMember)
 	f.addEdge(w, nodeA, nodeC)
 	f.addEdge(w, nodeB, nodeC)
 
@@ -400,146 +374,80 @@ func TestIsNodeDone_FalseWhenChainHasNoUniqueTerminal(t *testing.T) {
 	}
 }
 
-// TestProcessTaskStatusChange_SecondNodeSeesFreshAssigneeFromFirst guards
-// against a task that belongs to nodes in two different active workflows
-// getting reassigned twice in the same event: the second node's idempotency
-// check must see the first node's just-applied assignee rather than a
-// stale in-memory copy of the task.
-func TestProcessTaskStatusChange_SecondNodeSeesFreshAssigneeFromFirst(t *testing.T) {
-	f := newEngineFixture()
-	ctx := context.Background()
-	w1 := f.addWorkflow()
-	w2 := f.addWorkflow()
-	member := uuid.New()
-
-	task := &taskdom.Task{ID: uuid.New(), ProjectID: f.projectID, StatusID: &f.doneStatus.ID}
-	f.tasks.tasks[task.ID] = task
-	node1 := &workflowdom.Node{ID: uuid.New(), WorkflowID: w1.ID, TaskID: task.ID}
-	node2 := &workflowdom.Node{ID: uuid.New(), WorkflowID: w2.ID, TaskID: task.ID}
-	f.graph.nodes[node1.ID] = node1
-	f.graph.nodes[node2.ID] = node2
-	f.addRule(w1, f.doneStatus.ID, member)
-	f.addRule(w2, f.doneStatus.ID, member)
-
-	if err := f.consumer.processTaskStatusChange(ctx, f.projectID, task.ID); err != nil {
-		t.Fatalf("processTaskStatusChange: %v", err)
-	}
-
-	if f.tasks.updateCalls != 1 {
-		t.Fatalf("expected exactly 1 UpdateTask call — the second node's idempotency check should see the first node's assignment instead of a stale copy — got %d", f.tasks.updateCalls)
-	}
-}
-
-// TestApplyStatusRule_SkipsWhenWorkflowNoLongerActive guards against the
-// engine completing a reassignment against a workflow that was archived (or
-// reverted to draft) after ListActiveNodesByTaskID already returned this
-// node but before the mutating UpdateTask call runs.
-func TestApplyStatusRule_SkipsWhenWorkflowNoLongerActive(t *testing.T) {
+// TestTryFireEdge_SkipsWhenWorkflowNoLongerActive guards against the engine
+// completing a reassignment against a workflow that was archived (or
+// reverted to draft) after its predecessor was found done but before the
+// downstream rule-applier call runs.
+func TestTryFireEdge_SkipsWhenWorkflowNoLongerActive(t *testing.T) {
 	f := newEngineFixture()
 	ctx := context.Background()
 	w := f.addWorkflow()
 	member := uuid.New()
 
-	node, task := f.addNode(w, &f.doneStatus.ID)
-	f.addRule(w, f.doneStatus.ID, member)
+	source, _ := f.addNode(w, &f.doneStatus.ID)
+	target, task := f.addNode(w, &f.readyStatus.ID)
+	f.addTransition(w, f.doneStatus.ID, nil) // doneStatus is this workflow's terminal/done status
+	f.addRule(f.readyStatus.ID, member)
+	f.addEdge(w, source, target)
 
-	// Simulate archival landing in the window between the node being
-	// selected for evaluation and applyStatusRule actually running.
+	edges, err := f.graph.ListEdgesByWorkflow(ctx, w.ID)
+	if err != nil || len(edges) != 1 {
+		t.Fatalf("setup: expected exactly one edge, got %v (err=%v)", edges, err)
+	}
+
+	// Simulate archival landing in the window between the predecessor being
+	// found done and tryFireEdge actually running.
 	w.Status = workflowdom.StatusArchived
 
-	if err := f.consumer.applyStatusRule(ctx, f.projectID, node, task, "status_rule", newEvalCache()); err != nil {
-		t.Fatalf("applyStatusRule: %v", err)
+	if err := f.consumer.tryFireEdge(ctx, f.projectID, edges[0], newEvalCache()); err != nil {
+		t.Fatalf("tryFireEdge: %v", err)
 	}
-	if f.tasks.updateCalls != 0 {
-		t.Fatalf("expected no UpdateTask call once the workflow is no longer active, got %d", f.tasks.updateCalls)
+	if f.ruleApplier.calls != 0 {
+		t.Fatalf("expected no ApplyMatchingRule call once the workflow is no longer active, got %d", f.ruleApplier.calls)
+	}
+	if got := f.tasks.tasks[task.ID]; len(got.AssigneeIDs) != 0 {
+		t.Fatalf("expected target to remain unassigned, got %+v", got.AssigneeIDs)
 	}
 }
 
-// TestApplyStatusRule_ArchivedMidFanOut_StopsLaterNodes guards against the
+// TestTryFireEdge_ArchivedMidFanOut_StopsLaterEdges guards against the
 // workflow's active/archived status being memoized for the whole event: one
-// processTaskStatusChange call can fan out across several nodes/edges (an
-// AND-join cascade), and each node's applyStatusRule call must see the
-// workflow's current status, not whatever the first node in the fan-out saw.
-func TestApplyStatusRule_ArchivedMidFanOut_StopsLaterNodes(t *testing.T) {
+// done source can fan out across several outgoing edges in the same event,
+// and each edge's tryFireEdge call must see the workflow's current status,
+// not whatever the first edge in the fan-out saw.
+func TestTryFireEdge_ArchivedMidFanOut_StopsLaterEdges(t *testing.T) {
 	f := newEngineFixture()
 	ctx := context.Background()
 	w := f.addWorkflow()
-	memberA := uuid.New()
 	downstreamMember := uuid.New()
 
-	nodeA, taskA := f.addNode(w, &f.doneStatus.ID)
+	source, taskSource := f.addNode(w, &f.doneStatus.ID)
 	nodeB, taskB := f.addNode(w, &f.readyStatus.ID)
-	f.addTransition(w, f.doneStatus.ID, nil)         // doneStatus is this workflow's terminal/done status
-	f.addRule(w, f.doneStatus.ID, memberA)           // nodeA's own reassignment (event 1)
-	f.addRule(w, f.readyStatus.ID, downstreamMember) // nodeB's reassignment once nodeA is done (event 2)
-	f.addEdge(w, nodeA, nodeB)
+	nodeC, taskC := f.addNode(w, &f.readyStatus.ID)
+	f.addTransition(w, f.doneStatus.ID, nil) // doneStatus is this workflow's terminal/done status
+	f.addRule(f.readyStatus.ID, downstreamMember)
+	f.addEdge(w, source, nodeB)
+	f.addEdge(w, source, nodeC)
 
-	// Simulate the workflow being archived (e.g. via the HTTP handler)
-	// right after nodeA's own gate check reads "active" but before nodeB's
-	// predecessor-done gate check runs later in this same event's fan-out.
+	// Simulate the workflow being archived (e.g. via the HTTP handler) right
+	// after the first outgoing edge's gate check reads "active" but before
+	// the second edge's gate check runs later in this same event's fan-out.
 	f.graph.archiveAfterFindWorkflowCall = 1
 
-	if err := f.consumer.processTaskStatusChange(ctx, f.projectID, taskA.ID); err != nil {
-		t.Fatalf("processTaskStatusChange: %v", err)
-	}
-
-	gotA := f.tasks.tasks[taskA.ID]
-	if !isAssignedOnlyTo(gotA, memberA) {
-		t.Fatalf("expected nodeA's own reassignment to complete before the archive landed, got %+v", gotA.AssigneeIDs)
-	}
-	gotB := f.tasks.tasks[taskB.ID]
-	if len(gotB.AssigneeIDs) != 0 {
-		t.Fatalf("expected nodeB to NOT be reassigned once the workflow was archived mid-fan-out, got %v", gotB.AssigneeIDs)
-	}
-	if f.tasks.updateCalls != 1 {
-		t.Fatalf("expected exactly 1 UpdateTask call (nodeA only, before the archive), got %d", f.tasks.updateCalls)
-	}
-}
-
-// TestApplyStatusRule_ReflectsRuleEditedMidFanOut guards against a status
-// rule's assignee being memoized for the whole event: rules can now be
-// edited while a workflow stays active (unlike before, when editing required
-// reverting to draft first, which the workflow-status freshness check above
-// would have caught). One processTaskStatusChange call can fan out across
-// several nodes in the same workflow (an A->B chain), and nodeB's rule
-// lookup must see a concurrent edit landing between nodeA's and nodeB's
-// evaluation rather than reusing nodeA's now-stale snapshot.
-func TestApplyStatusRule_ReflectsRuleEditedMidFanOut(t *testing.T) {
-	f := newEngineFixture()
-	ctx := context.Background()
-	w := f.addWorkflow()
-	memberA := uuid.New()
-	oldMemberB := uuid.New()
-	newMemberB := uuid.New()
-
-	nodeA, taskA := f.addNode(w, &f.doneStatus.ID)
-	nodeB, taskB := f.addNode(w, &f.readyStatus.ID)
-	f.addTransition(w, f.doneStatus.ID, nil) // doneStatus is this workflow's terminal/done status
-	f.addRule(w, f.doneStatus.ID, memberA)   // nodeA's own reassignment (event 1)
-	ruleB := &workflowdom.StatusRule{ID: uuid.New(), WorkflowID: w.ID, StatusID: f.readyStatus.ID, AssigneeMemberID: oldMemberB}
-	f.graph.rules[w.ID] = append(f.graph.rules[w.ID], ruleB)
-	f.addEdge(w, nodeA, nodeB)
-
-	// Simulate a concurrent SetStatusRule call (e.g. via the HTTP handler)
-	// changing nodeB's rule right after nodeA's rules lookup (event 1) but
-	// before nodeB's (event 2, fired once nodeA is done) — both reads happen
-	// inside the same processTaskStatusChange fan-out.
-	f.graph.afterListStatusRulesCall = func(call int) {
-		if call == 1 {
-			ruleB.AssigneeMemberID = newMemberB
-		}
-	}
-
-	if err := f.consumer.processTaskStatusChange(ctx, f.projectID, taskA.ID); err != nil {
+	if err := f.consumer.processTaskStatusChange(ctx, f.projectID, taskSource.ID); err != nil {
 		t.Fatalf("processTaskStatusChange: %v", err)
 	}
 
 	gotB := f.tasks.tasks[taskB.ID]
-	if !isAssignedOnlyTo(gotB, newMemberB) {
-		t.Fatalf("expected nodeB to be assigned the rule's up-to-date member %v (edited concurrently mid-fan-out), got %+v", newMemberB, gotB.AssigneeIDs)
+	if !isAssignedOnlyTo(gotB, downstreamMember) {
+		t.Fatalf("expected the first edge's downstream reassignment to complete before the archive landed, got %+v", gotB.AssigneeIDs)
 	}
-	if f.graph.rulesCalls != 2 {
-		t.Fatalf("expected rules to be re-read fresh for each node in the fan-out (not cached), got %d calls", f.graph.rulesCalls)
+	gotC := f.tasks.tasks[taskC.ID]
+	if len(gotC.AssigneeIDs) != 0 {
+		t.Fatalf("expected the second edge's downstream to NOT be reassigned once the workflow was archived mid-fan-out, got %v", gotC.AssigneeIDs)
+	}
+	if f.ruleApplier.calls != 1 {
+		t.Fatalf("expected exactly 1 ApplyMatchingRule call (first edge only, before the archive), got %d", f.ruleApplier.calls)
 	}
 }
 
@@ -557,15 +465,15 @@ func TestDiamond_ANDJoin_CachesTransitionsAcrossPredecessors(t *testing.T) {
 	nodeB, _ := f.addNode(w, &f.doneStatus.ID)
 	nodeC, _ := f.addNode(w, &f.readyStatus.ID)
 	f.addTransition(w, f.doneStatus.ID, nil) // doneStatus is this workflow's terminal/done status
-	f.addRule(w, f.readyStatus.ID, downstreamMember)
+	f.addRule(f.readyStatus.ID, downstreamMember)
 	f.addEdge(w, nodeA, nodeC)
 	f.addEdge(w, nodeB, nodeC)
 
 	// Both predecessors already done: a single status-change event on A
 	// evaluates isNodeDone for A (directly) and for A and B again (inside
 	// tryFireEdge's AND-join loop) — all against the same workflow — plus
-	// applyStatusRule's next-status lookup for C. All of those should share
-	// one real repository call.
+	// tryFireEdge's next-status lookup for C. All of those should share one
+	// real repository call.
 	if err := f.consumer.processTaskStatusChange(ctx, f.projectID, taskA.ID); err != nil {
 		t.Fatalf("processTaskStatusChange: %v", err)
 	}

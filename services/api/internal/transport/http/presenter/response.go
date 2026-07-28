@@ -18,6 +18,7 @@ import (
 	pluginom "github.com/Paca-AI/api/internal/domain/plugin"
 	projectdom "github.com/Paca-AI/api/internal/domain/project"
 	sprintdom "github.com/Paca-AI/api/internal/domain/sprint"
+	statusruledom "github.com/Paca-AI/api/internal/domain/statusrule"
 	taskdom "github.com/Paca-AI/api/internal/domain/task"
 	userdom "github.com/Paca-AI/api/internal/domain/user"
 	workflowdom "github.com/Paca-AI/api/internal/domain/workflow"
@@ -323,12 +324,6 @@ func statusAndCodeFor(err error) (int, apierr.Code) {
 		return http.StatusConflict, apierr.CodeWorkflowNodeDuplicateTask
 	case errors.Is(err, workflowdom.ErrNodeTaskCrossProject):
 		return http.StatusBadRequest, apierr.CodeWorkflowNodeTaskCrossProject
-	case errors.Is(err, workflowdom.ErrStatusRuleNotFound):
-		return http.StatusNotFound, apierr.CodeWorkflowStatusRuleNotFound
-	case errors.Is(err, workflowdom.ErrStatusRuleCrossProject):
-		return http.StatusBadRequest, apierr.CodeWorkflowStatusRuleCrossProject
-	case errors.Is(err, workflowdom.ErrStatusRuleConflict):
-		return http.StatusConflict, apierr.CodeWorkflowStatusRuleConflict
 	case errors.Is(err, workflowdom.ErrStatusTransitionNotFound):
 		return http.StatusNotFound, apierr.CodeWorkflowStatusTransitionNotFound
 	case errors.Is(err, workflowdom.ErrStatusTransitionCrossProject):
@@ -359,8 +354,19 @@ func statusAndCodeFor(err error) (int, apierr.Code) {
 		return http.StatusBadRequest, apierr.CodeWorkflowActivateDoneStatusUndetermined
 	case errors.Is(err, workflowdom.ErrActivateTaskMissing):
 		return http.StatusBadRequest, apierr.CodeWorkflowActivateTaskMissing
-	case errors.Is(err, workflowdom.ErrActivateNoStatusRules):
-		return http.StatusBadRequest, apierr.CodeWorkflowActivateNoStatusRules
+	// --- Status assignment rule errors -----------------------------------------
+	case errors.Is(err, statusruledom.ErrNotFound):
+		return http.StatusNotFound, apierr.CodeStatusRuleNotFound
+	case errors.Is(err, statusruledom.ErrNameInvalid):
+		return http.StatusBadRequest, apierr.CodeStatusRuleNameInvalid
+	case errors.Is(err, statusruledom.ErrCrossProject):
+		return http.StatusBadRequest, apierr.CodeStatusRuleCrossProject
+	case errors.Is(err, statusruledom.ErrFilterUnknownCustomField):
+		return http.StatusBadRequest, apierr.CodeStatusRuleFilterUnknownCustomField
+	case errors.Is(err, statusruledom.ErrReorderInvalid):
+		return http.StatusBadRequest, apierr.CodeStatusRuleReorderInvalid
+	case errors.Is(err, taskdom.ErrStatusInUseByStatusRule):
+		return http.StatusConflict, apierr.CodeTaskStatusInUseByStatusRule
 	default:
 		return http.StatusInternalServerError, apierr.CodeInternalError
 	}
@@ -539,21 +545,20 @@ func httpStatusForCode(code apierr.Code) int {
 		return http.StatusBadRequest
 	case apierr.CodeWorkflowNotFound,
 		apierr.CodeWorkflowNodeNotFound,
-		apierr.CodeWorkflowStatusRuleNotFound,
 		apierr.CodeWorkflowStatusTransitionNotFound,
-		apierr.CodeWorkflowEdgeNotFound:
+		apierr.CodeWorkflowEdgeNotFound,
+		apierr.CodeStatusRuleNotFound:
 		return http.StatusNotFound
 	case apierr.CodeWorkflowNodeDuplicateTask,
 		apierr.CodeWorkflowEdgeDuplicate,
 		apierr.CodeWorkflowNotDraft,
 		apierr.CodeWorkflowNotActive,
 		apierr.CodeWorkflowArchived,
-		apierr.CodeWorkflowStatusRuleConflict,
-		apierr.CodeWorkflowStatusTransitionConflict:
+		apierr.CodeWorkflowStatusTransitionConflict,
+		apierr.CodeTaskStatusInUseByStatusRule:
 		return http.StatusConflict
 	case apierr.CodeWorkflowNameInvalid,
 		apierr.CodeWorkflowNodeTaskCrossProject,
-		apierr.CodeWorkflowStatusRuleCrossProject,
 		apierr.CodeWorkflowStatusTransitionCrossProject,
 		apierr.CodeWorkflowStatusTransitionSelfLoop,
 		apierr.CodeWorkflowEdgeSelfLoop,
@@ -562,7 +567,10 @@ func httpStatusForCode(code apierr.Code) int {
 		apierr.CodeWorkflowActivateNoNodes,
 		apierr.CodeWorkflowActivateDoneStatusUndetermined,
 		apierr.CodeWorkflowActivateTaskMissing,
-		apierr.CodeWorkflowActivateNoStatusRules:
+		apierr.CodeStatusRuleNameInvalid,
+		apierr.CodeStatusRuleCrossProject,
+		apierr.CodeStatusRuleFilterUnknownCustomField,
+		apierr.CodeStatusRuleReorderInvalid:
 		return http.StatusBadRequest
 	case apierr.CodeBadRequest:
 		return http.StatusBadRequest

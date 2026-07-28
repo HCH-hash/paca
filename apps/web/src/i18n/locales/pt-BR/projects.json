@@ -581,6 +581,81 @@
 				"cancel": "Cancelar",
 				"deletePermanently": "Excluir permanentemente"
 			}
+		},
+		"statusRules": {
+			"title": "Regras de atribuição por status",
+			"description": "Atribui automaticamente uma tarefa a um membro sempre que ela atingir um status configurado — em todo o projeto, opcionalmente restrito por filtros.",
+			"newRule": "Nova regra",
+			"ruleCount_one": "{{count}} regra",
+			"ruleCount_other": "{{count}} regras",
+			"assignsTo": "Atribui a {{member}}",
+			"allTasks": "Todas as tarefas",
+			"filterCount_one": "{{count}} filtro",
+			"filterCount_other": "{{count}} filtros",
+			"enabledLabel": "Ativada",
+			"editRule": "Editar regra",
+			"deleteRule": "Excluir regra",
+			"empty": {
+				"title": "Ainda não há regras de atribuição por status",
+				"description": "Crie uma regra para atribuir automaticamente tarefas a um membro quando atingirem um determinado status.",
+				"createRule": "Criar primeira regra"
+			},
+			"deleteDialog": {
+				"title": "Excluir regra",
+				"description": "Excluir \"{{name}}\"? Esta ação não pode ser desfeita.",
+				"cancel": "Cancelar",
+				"confirm": "Excluir regra"
+			},
+			"formDialog": {
+				"createTitle": "Nova regra de atribuição por status",
+				"editTitle": "Editar regra de atribuição por status",
+				"description": "Atribui automaticamente as tarefas correspondentes a um membro quando atingirem o status selecionado.",
+				"nameLabel": "Nome",
+				"namePlaceholder": "ex.: Atribuir bugs ao QA",
+				"statusLabel": "Status de gatilho",
+				"statusPlaceholder": "Status",
+				"statusImmutableHint": "O status não pode ser alterado após a criação — exclua e recrie a regra.",
+				"assigneeLabel": "Atribuir a",
+				"assigneePlaceholder": "Membro",
+				"enabledLabel": "Ativada",
+				"enabledHint": "Desative para manter esta regra configurada sem que ela seja executada.",
+				"filterTitle": "Filtros",
+				"filterHint": "Restrinja esta regra às tarefas que atendam a todos os critérios abaixo. Deixe tudo vazio para aplicar a todas as tarefas neste status.",
+				"cancel": "Cancelar",
+				"saveChanges": "Salvar alterações",
+				"createRule": "Criar regra",
+				"errors": {
+					"nameInvalid": "O nome é obrigatório.",
+					"crossProject": "O status ou membro selecionado não pertence a este projeto.",
+					"unknownCustomField": "O filtro faz referência a um campo personalizado que não existe mais.",
+					"saveFailed": "Falha ao salvar a regra. Tente novamente."
+				},
+				"filters": {
+					"taskType": "Tipo de tarefa",
+					"sprint": "Sprint",
+					"assignee": "Responsável atual",
+					"tags": "Tags",
+					"importance": "Importância",
+					"storyPoints": "Story points",
+					"dates": "Datas",
+					"startDate": "Data de início",
+					"dueDate": "Data de entrega",
+					"any": "Qualquer",
+					"selectedCount_one": "{{count}} selecionados",
+					"selectedCount_other": "{{count}} selecionados",
+					"backlogOnly": "Somente backlog (sem sprint)",
+					"unassigned": "Não atribuído",
+					"noSprints": "Este projeto ainda não tem sprints",
+					"noTaskTypes": "Este projeto ainda não tem tipos de tarefa",
+					"min": "Mín",
+					"max": "Máx",
+					"yes": "Sim",
+					"no": "Não",
+					"contains": "Contém…",
+					"customized": "Personalizado",
+					"addTag": "Adicionar tag"
+				}
+			}
 		}
 	},
 	"taskStatuses": {
@@ -1277,19 +1352,16 @@
 			"cancel": "Cancelar",
 			"removeConfirmAction": "Remover"
 		},
-		"statusRules": {
-			"title": "Regras de status → responsável",
-			"hint": "Atribua automaticamente uma tarefa a um membro sempre que ela mudar para um destes status. Isso se aplica a qualquer tarefa neste workflow — quando alguém altera o status de uma tarefa diretamente, ou quando uma tarefa predecessora é concluída e uma tarefa subsequente é reavaliada no seu status atual.",
-			"noRules": "Nenhuma regra ainda",
-			"statusPlaceholder": "Status",
-			"memberPlaceholder": "Responsável"
-		},
 		"statusTransitions": {
 			"title": "Fluxo de status",
 			"hint": "Defina qual status vem em seguida assim que o trabalho em cada status é concluído. Isso desbloqueia tarefas subsequentes e informa a um agente de IA responsável exatamente qual status definir a seguir, em vez de adivinhar. Uma cadeia padrão é gerada automaticamente a partir dos status do seu projeto quando o workflow é criado.",
 			"nextStatusLabel": "Próximo status",
 			"terminalOption": "__END__",
 			"ambiguousWarning": "Exatamente um status não deve ter próximo status (este se torna o status __END__ do workflow). Atualmente: {{count}} configurados."
+		},
+		"statusRulesPage": {
+			"title": "Regras de status",
+			"subtitle": "Atribua tarefas automaticamente a um membro quando atingirem um determinado status"
 		}
 	}
 }

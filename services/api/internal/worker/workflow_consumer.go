@@ -6,15 +6,12 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"slices"
 	"strings"
 	"time"
 
 	taskdom "github.com/Paca-AI/api/internal/domain/task"
-	userdom "github.com/Paca-AI/api/internal/domain/user"
 	workflowdom "github.com/Paca-AI/api/internal/domain/workflow"
 	"github.com/Paca-AI/api/internal/events"
-	"github.com/Paca-AI/api/internal/platform/messaging"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 )
@@ -26,12 +23,11 @@ const (
 )
 
 // workflowGraphReader is the minimal workflowdom.Repository surface the
-// engine needs to walk the graph and evaluate rules.
+// engine needs to walk the graph.
 type workflowGraphReader interface {
 	FindWorkflowByID(ctx context.Context, id uuid.UUID) (*workflowdom.Workflow, error)
 	FindNodeByID(ctx context.Context, id uuid.UUID) (*workflowdom.Node, error)
 	ListActiveNodesByTaskID(ctx context.Context, taskID uuid.UUID) ([]*workflowdom.Node, error)
-	ListStatusRulesByWorkflow(ctx context.Context, workflowID uuid.UUID) ([]*workflowdom.StatusRule, error)
 	ListStatusTransitionsByWorkflow(ctx context.Context, workflowID uuid.UUID) ([]*workflowdom.StatusTransition, error)
 	ListEdgesByWorkflow(ctx context.Context, workflowID uuid.UUID) ([]*workflowdom.Edge, error)
 	ListIncomingEdges(ctx context.Context, targetNodeID uuid.UUID) ([]*workflowdom.Edge, error)
@@ -45,39 +41,36 @@ type workflowTaskReader interface {
 	FindTaskStatusByID(ctx context.Context, id uuid.UUID) (*taskdom.TaskStatus, error)
 }
 
-// workflowTaskUpdater applies an assignment change through the normal task
-// service, so it gets the same validation and side effects as a human PATCH.
-type workflowTaskUpdater interface {
-	UpdateTask(ctx context.Context, projectID, id uuid.UUID, in taskdom.UpdateTaskInput) (*taskdom.Task, error)
-}
-
-// workflowActivityRecorder posts the workflow.assigned activity entry.
-type workflowActivityRecorder interface {
-	RecordActivity(ctx context.Context, in taskdom.RecordActivityInput) error
+// statusRuleApplier is the minimal statusruledom.Service surface the
+// workflow consumer needs to re-evaluate a downstream task's assignment
+// once a predecessor completes — see tryFireEdge. Reassignment itself
+// (looking up a matching status-assignment rule, updating the task,
+// recording the activity, publishing the event) is NOT this package's
+// concern anymore; it lives entirely behind this interface.
+type statusRuleApplier interface {
+	ApplyMatchingRule(ctx context.Context, projectID uuid.UUID, task *taskdom.Task, reason string, extra map[string]any) error
 }
 
 // WorkflowConsumer reads task-activity events from StreamTaskActivities and
-// evaluates automation workflows whenever a task's status changes:
+// evaluates automation workflows whenever a task's status changes: once a
+// node's task reaches the workflow's derived done status (see isNodeDone)
+// — and, for nodes with multiple incoming edges, once ALL predecessors
+// have — each downstream node's task is re-evaluated against the
+// project-wide status-assignment-rule engine (statusRuleApplier), using its
+// OWN current status. No status is changed on the downstream task; the
+// engine may or may not reassign it depending on whether a rule matches.
 //
-//   - Event 1 (status changed): the task's new status is looked up in the
-//     workflow's status rules and, if found, the task is reassigned.
-//   - Event 2 (predecessor done): once a node's task reaches the workflow's
-//     derived done status (see isNodeDone) — and, for nodes with multiple
-//     incoming edges, once ALL predecessors have — each downstream node's
-//     task is reassigned using its OWN current status against the same
-//     workflow rules.
-//
-// Both events reuse the same status->assignee lookup (applyStatusRule); the
-// only difference is which (node, task) pair is being evaluated. Because the
-// workflow graph is a DAG (enforced at edge-creation time) and can't change
-// while active, cascades are guaranteed to terminate.
+// This is "event 2" (predecessor done) only — reassignment triggered
+// directly by a task's own status change ("event 1") is handled entirely
+// by the separate, project-wide status-rule consumer, independent of
+// workflow/node membership. Because the workflow graph is a DAG (enforced
+// at edge-creation time) and can't change while active, cascades are
+// guaranteed to terminate.
 type WorkflowConsumer struct {
 	client       *redis.Client
 	workflowRepo workflowGraphReader
 	taskRepo     workflowTaskReader
-	taskSvc      workflowTaskUpdater
-	activityRec  workflowActivityRecorder
-	publisher    *messaging.Publisher
+	ruleApplier  statusRuleApplier
 	log          *slog.Logger
 	consumerName string
 	stopCh       chan struct{}
@@ -89,9 +82,7 @@ func NewWorkflowConsumer(
 	client *redis.Client,
 	workflowRepo workflowGraphReader,
 	taskRepo workflowTaskReader,
-	taskSvc workflowTaskUpdater,
-	activityRec workflowActivityRecorder,
-	publisher *messaging.Publisher,
+	ruleApplier statusRuleApplier,
 	log *slog.Logger,
 ) *WorkflowConsumer {
 	hostname, err := os.Hostname()
@@ -102,9 +93,7 @@ func NewWorkflowConsumer(
 		client:       client,
 		workflowRepo: workflowRepo,
 		taskRepo:     taskRepo,
-		taskSvc:      taskSvc,
-		activityRec:  activityRec,
-		publisher:    publisher,
+		ruleApplier:  ruleApplier,
 		log:          log,
 		consumerName: fmt.Sprintf("%s.%s", workflowConsumerGroup, hostname),
 		stopCh:       make(chan struct{}),
@@ -226,14 +215,10 @@ type taskUpdatedContent struct {
 // predecessors — doesn't refetch the same workflow's transitions, or the
 // same node/task row, once per node/edge.
 //
-// Status rules are deliberately NOT memoized here, even within one event: a
-// rule's assignee can now be edited while its workflow stays active (see
-// requireEditableOwnedWorkflow in the API service), so a Go-map cache scoped
-// to this event has no way to learn about a concurrent edit landing
-// mid-fan-out. Rules are still cached — just one layer down, in
-// workflowsvc.CachedRepository, which is shared with the API's write path
-// and correctly invalidated on every SetStatusRule/RemoveStatusRule instead
-// of trusting a TTL or an event boundary — see applyStatusRule.
+// Status-assignment rules are not part of this cache at all anymore: they
+// live entirely behind the statusRuleApplier interface (see tryFireEdge),
+// which reads through its own cache layer (statusrulesvc.CachedRepository)
+// invalidated on every write instead of trusting a TTL or an event boundary.
 type evalCache struct {
 	transitions map[uuid.UUID][]*workflowdom.StatusTransition
 	edges       map[uuid.UUID][]*workflowdom.Edge
@@ -397,15 +382,12 @@ func (c *WorkflowConsumer) processTaskStatusChange(ctx context.Context, projectI
 
 // applyNode runs event 1 (this node's own status rule) and, if the node just
 // became done, fans out event 2 to its outgoing edges. task is shared with
-// every other node evaluated for this same event (see cache), and
-// applyStatusRule updates its AssigneeIDs in place after a successful
-// reassignment so a task wrapped by multiple active-workflow nodes doesn't
-// have a later node's idempotency check read a stale assignee.
+// every other node evaluated for this same event (see cache): the shared
+// rule-applier mutates a matched task's AssigneeIDs in place after a
+// successful reassignment so a task wrapped by multiple active-workflow
+// nodes/edges doesn't have a later node's idempotency check read a stale
+// assignee.
 func (c *WorkflowConsumer) applyNode(ctx context.Context, projectID uuid.UUID, node *workflowdom.Node, task *taskdom.Task, cache *evalCache) error {
-	if err := c.applyStatusRule(ctx, projectID, node, task, "status_rule", cache); err != nil {
-		return fmt.Errorf("apply status rule: %w", err)
-	}
-
 	done, err := c.isNodeDone(ctx, node, task, cache)
 	if err != nil {
 		return fmt.Errorf("check done status: %w", err)
@@ -451,7 +433,9 @@ func (c *WorkflowConsumer) isNodeDone(ctx context.Context, node *workflowdom.Nod
 
 // tryFireEdge evaluates the AND-join for edge's target node — ALL of the
 // target's incoming edges must have a done source — and, if satisfied,
-// applies event 2 using the target task's own current status.
+// re-evaluates the target task's assignment (event 2: "predecessor done")
+// against the project-wide status-assignment-rule engine, using the
+// target's own current status. No status is changed on the target task.
 func (c *WorkflowConsumer) tryFireEdge(ctx context.Context, projectID uuid.UUID, edge *workflowdom.Edge, cache *evalCache) error {
 	target, err := cache.getNode(ctx, c.workflowRepo, edge.TargetNodeID)
 	if err != nil {
@@ -487,58 +471,18 @@ func (c *WorkflowConsumer) tryFireEdge(ctx context.Context, projectID uuid.UUID,
 	if err != nil {
 		return fmt.Errorf("find target task: %w", err)
 	}
-	return c.applyStatusRule(ctx, projectID, target, targetTask, "predecessor_done", cache)
-}
-
-// applyStatusRule looks up node's rule for task's current status and, if one
-// exists and the assignee actually differs (idempotent no-op otherwise),
-// reassigns the task through the normal task service, records a
-// workflow.assigned activity, and publishes to StreamTaskAssignments so the
-// existing notification/agent-trigger pipeline picks it up uniformly.
-//
-// task is mutated in place on a successful reassignment (see the
-// UpdateTask call below) because it may be shared with other nodes/edges
-// evaluated for the same event (see evalCache): without that, a second
-// node's idempotency check below would read the assignee this call is in
-// the middle of changing, and unconditionally overwrite it again.
-func (c *WorkflowConsumer) applyStatusRule(ctx context.Context, projectID uuid.UUID, node *workflowdom.Node, task *taskdom.Task, reason string, cache *evalCache) error {
-	if task.StatusID == nil {
+	if targetTask.StatusID == nil {
 		return nil
 	}
 
-	// Not memoized in evalCache: a rule's assignee can now be edited while
-	// the workflow stays active, so a single event's fan-out (e.g. an A->B
-	// chain) must not let a later node's lookup reuse an earlier node's
-	// now-superseded snapshot of the rule list. This still reads through
-	// workflowsvc.CachedRepository under the hood (see bootstrap wiring),
-	// which caches the same list across events too — the difference is that
-	// its cache is invalidated the moment a rule is written, rather than
-	// held for the lifetime of whatever Go value last read it.
-	rules, err := c.workflowRepo.ListStatusRulesByWorkflow(ctx, node.WorkflowID)
-	if err != nil {
-		return fmt.Errorf("list status rules: %w", err)
-	}
-	var rule *workflowdom.StatusRule
-	for _, r := range rules {
-		if r.StatusID == *task.StatusID {
-			rule = r
-			break
-		}
-	}
-	if rule == nil {
-		return nil
-	}
-	if len(task.AssigneeIDs) == 1 && task.AssigneeIDs[0] == rule.AssigneeMemberID {
-		return nil // already assigned exactly to the rule's member — idempotent no-op
-	}
-
-	// Fetched fresh (not through evalCache) despite already being read
-	// earlier in this same event's fan-out: this check gates the mutating
-	// write just below, and a single event can cascade across many
-	// nodes/edges (an AND-join). Caching it for the whole event would let a
-	// workflow archived mid-fan-out keep being acted on by every node
-	// evaluated after the cache was first populated.
-	workflow, err := c.workflowRepo.FindWorkflowByID(ctx, node.WorkflowID)
+	// Fetched fresh (not through evalCache) despite the workflow possibly
+	// already being read earlier in this same event's fan-out: this check
+	// gates the mutating call just below, and a single event can cascade
+	// across many nodes/edges (an AND-join). Caching it for the whole event
+	// would let a workflow archived mid-fan-out keep triggering
+	// reassignment for every edge evaluated after the cache was first
+	// populated.
+	workflow, err := c.workflowRepo.FindWorkflowByID(ctx, target.WorkflowID)
 	if err != nil {
 		return fmt.Errorf("find workflow: %w", err)
 	}
@@ -549,37 +493,13 @@ func (c *WorkflowConsumer) applyStatusRule(ctx context.Context, projectID uuid.U
 		return nil
 	}
 
-	oldAssignees := task.AssigneeIDs
-	newAssignee := rule.AssigneeMemberID
-	newAssigneeIDs := []uuid.UUID{newAssignee}
-	if _, err := c.taskSvc.UpdateTask(ctx, projectID, task.ID, taskdom.UpdateTaskInput{AssigneeIDs: &newAssigneeIDs}); err != nil {
-		return fmt.Errorf("update task assignee: %w", err)
-	}
-	task.AssigneeIDs = newAssigneeIDs
-
-	if c.activityRec != nil {
-		content, _ := json.Marshal(map[string]any{
-			"workflow_id":   workflow.ID,
-			"workflow_name": workflow.Name,
-			"reason":        reason,
-			"old_assignees": oldAssignees,
-			"new_assignee":  newAssignee,
-		})
-		_ = c.activityRec.RecordActivity(ctx, taskdom.RecordActivityInput{
-			TaskID:       task.ID,
-			ProjectID:    projectID,
-			ActivityType: taskdom.ActivityTypeWorkflowAssigned,
-			Content:      content,
-		})
-	}
-
 	extra := map[string]any{
 		"workflow_id":   workflow.ID.String(),
 		"workflow_name": workflow.Name,
 	}
-	if transitions, err := cache.getTransitions(ctx, c.workflowRepo, node.WorkflowID); err == nil {
+	if transitions, err := cache.getTransitions(ctx, c.workflowRepo, target.WorkflowID); err == nil {
 		for _, tr := range transitions {
-			if tr.StatusID == *task.StatusID && tr.NextStatusID != nil {
+			if tr.StatusID == *targetTask.StatusID && tr.NextStatusID != nil {
 				if status, err := c.taskRepo.FindTaskStatusByID(ctx, *tr.NextStatusID); err == nil {
 					extra["next_status_name"] = status.Name
 				}
@@ -587,14 +507,6 @@ func (c *WorkflowConsumer) applyStatusRule(ctx context.Context, projectID uuid.U
 			}
 		}
 	}
-	// Only notify for a genuinely new assignment — if newAssignee was already
-	// one of the task's prior assignees (e.g. task had [A, B] and the rule
-	// targets A), the reassignment above still collapses the set down to
-	// [A], but A doesn't need a fresh "you've been assigned" notification.
-	// Mirrors the same dedup the HTTP UpdateTask handler does.
-	if !slices.Contains(oldAssignees, newAssignee) {
-		_ = events.PublishAssignmentChanged(ctx, c.publisher, task.ID, projectID, newAssignee, nil, userdom.SystemActorUserID, extra)
-	}
 
-	return nil
+	return c.ruleApplier.ApplyMatchingRule(ctx, projectID, targetTask, "predecessor_done", extra)
 }

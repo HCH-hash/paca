@@ -4,11 +4,9 @@
 // A Workflow is a project-scoped, draft/active/archived dependency graph
 // over existing tasks. Each WorkflowNode wraps one task; WorkflowEdge is a
 // plain dependency link between two nodes with no per-edge configuration.
-// A workflow also carries two shared, workflow-level (not per-node) lookup
-// tables:
+// A workflow also carries a shared, workflow-level (not per-node) lookup
+// table:
 //
-//   - StatusRule — maps a status to the member who should be auto-assigned
-//     when any task in the workflow reaches that status.
 //   - StatusTransition — the "status workflow": maps a status to the status
 //     that should come next once work at that status is done, so an
 //     AI-agent assignee can be told exactly what to set next instead of
@@ -16,15 +14,15 @@
 //     chain — whichever status has no next status configured (see
 //     DeriveDoneStatusID) — rather than being its own field.
 //
-// Both automation events reuse the same status->assignee lookup:
-//
-//   - Event 1 (status changed): a task's new status is looked up in the
-//     workflow's rules and, if found, the task is reassigned.
-//   - Event 2 (predecessor done): once a node's task reaches the workflow's
-//     derived done status (and, for nodes with multiple incoming edges,
-//     once ALL predecessors have reached theirs), each downstream node's
-//     task is reassigned using ITS OWN current status against the same
-//     workflow rules — no status is changed on the downstream task.
+// Reassignment itself (status->assignee "rules") is NOT a workflow concept:
+// it lives in the separate, project-wide statusruledom package, which
+// applies to every task in the project regardless of workflow membership.
+// A workflow only triggers a re-evaluation of that engine once a node's
+// task reaches the workflow's derived done status (and, for nodes with
+// multiple incoming edges, once ALL predecessors have reached theirs) — see
+// worker.WorkflowConsumer's predecessor-done cascade — because the
+// downstream task's own status may not itself be changing, so nothing else
+// would re-trigger the rule engine for it.
 package workflowdom
 
 import (
@@ -82,19 +80,6 @@ type Node struct {
 	UpdatedAt  time.Time
 }
 
-// StatusRule maps a status to the member who should be auto-assigned when
-// any task in the workflow reaches that status, either because it changed
-// directly (event 1) or because a predecessor node just finished (event 2).
-// It belongs to the workflow as a whole, not to any single node.
-type StatusRule struct {
-	ID               uuid.UUID
-	WorkflowID       uuid.UUID
-	StatusID         uuid.UUID
-	AssigneeMemberID uuid.UUID
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
-}
-
 // StatusTransition declares, for one status in the workflow, which status
 // should come next once a task reaches it — the "status workflow." A nil
 // NextStatusID marks StatusID as terminal (the workflow's done status).
@@ -136,13 +121,12 @@ type Edge struct {
 	CreatedAt    time.Time
 }
 
-// Graph bundles a workflow with its full node/rule/transition/edge set, as
+// Graph bundles a workflow with its full node/transition/edge set, as
 // returned by the single-fetch "get workflow" read used to hydrate the
 // canvas builder.
 type Graph struct {
 	Workflow          *Workflow
 	Nodes             []*Node
-	StatusRules       []*StatusRule
 	StatusTransitions []*StatusTransition
 	Edges             []*Edge
 }

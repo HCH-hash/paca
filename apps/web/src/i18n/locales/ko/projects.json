@@ -581,6 +581,81 @@
 				"cancel": "취소",
 				"deletePermanently": "영구 삭제"
 			}
+		},
+		"statusRules": {
+			"title": "상태 할당 규칙",
+			"description": "작업이 설정한 상태에 도달할 때마다 프로젝트 전체에서 자동으로 담당자를 지정합니다. 필터로 대상 작업을 좁힐 수도 있습니다.",
+			"newRule": "새 규칙",
+			"ruleCount_one": "규칙 {{count}}개",
+			"ruleCount_other": "규칙 {{count}}개",
+			"assignsTo": "{{member}}에게 할당",
+			"allTasks": "모든 작업",
+			"filterCount_one": "필터 {{count}}개",
+			"filterCount_other": "필터 {{count}}개",
+			"enabledLabel": "사용",
+			"editRule": "규칙 수정",
+			"deleteRule": "규칙 삭제",
+			"empty": {
+				"title": "아직 상태 할당 규칙이 없습니다",
+				"description": "작업이 특정 상태에 도달할 때 자동으로 담당자를 지정하는 규칙을 만드세요.",
+				"createRule": "첫 규칙 만들기"
+			},
+			"deleteDialog": {
+				"title": "규칙 삭제",
+				"description": "\"{{name}}\"을(를) 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.",
+				"cancel": "취소",
+				"confirm": "규칙 삭제"
+			},
+			"formDialog": {
+				"createTitle": "새 상태 할당 규칙",
+				"editTitle": "상태 할당 규칙 수정",
+				"description": "선택한 상태에 도달하는 일치하는 작업에 자동으로 담당자를 지정합니다.",
+				"nameLabel": "이름",
+				"namePlaceholder": "예: 버그를 QA에 할당",
+				"statusLabel": "트리거 상태",
+				"statusPlaceholder": "상태",
+				"statusImmutableHint": "상태는 생성 후 변경할 수 없습니다 — 삭제 후 다시 만드세요.",
+				"assigneeLabel": "담당자",
+				"assigneePlaceholder": "멤버",
+				"enabledLabel": "사용",
+				"enabledHint": "규칙을 실행하지 않고 설정만 유지하려면 비활성화하세요.",
+				"filterTitle": "필터",
+				"filterHint": "아래 조건을 모두 충족하는 작업으로 범위를 좁힙니다. 모두 비워두면 이 상태의 모든 작업에 적용됩니다.",
+				"cancel": "취소",
+				"saveChanges": "변경 사항 저장",
+				"createRule": "규칙 만들기",
+				"errors": {
+					"nameInvalid": "이름을 입력해야 합니다.",
+					"crossProject": "선택한 상태 또는 멤버가 이 프로젝트에 속하지 않습니다.",
+					"unknownCustomField": "필터가 더 이상 존재하지 않는 커스텀 필드를 참조합니다.",
+					"saveFailed": "규칙을 저장하지 못했습니다. 다시 시도해 주세요."
+				},
+				"filters": {
+					"taskType": "작업 유형",
+					"sprint": "스프린트",
+					"assignee": "현재 담당자",
+					"tags": "태그",
+					"importance": "중요도",
+					"storyPoints": "스토리 포인트",
+					"dates": "날짜",
+					"startDate": "시작일",
+					"dueDate": "마감일",
+					"any": "전체",
+					"selectedCount_one": "{{count}}개 선택됨",
+					"selectedCount_other": "{{count}}개 선택됨",
+					"backlogOnly": "백로그만 (스프린트 없음)",
+					"unassigned": "미배정",
+					"noSprints": "이 프로젝트에는 아직 스프린트가 없습니다",
+					"noTaskTypes": "이 프로젝트에는 아직 작업 유형이 없습니다",
+					"min": "최소",
+					"max": "최대",
+					"yes": "예",
+					"no": "아니요",
+					"contains": "포함…",
+					"customized": "사용자 지정됨",
+					"addTag": "태그 추가"
+				}
+			}
 		}
 	},
 	"taskStatuses": {
@@ -1277,19 +1352,16 @@
 			"cancel": "취소",
 			"removeConfirmAction": "제거"
 		},
-		"statusRules": {
-			"title": "상태 → 담당자 규칙",
-			"hint": "태스크가 다음 상태 중 하나로 변경될 때마다 자동으로 멤버에게 할당합니다. 이는 이 워크플로우의 모든 태스크에 적용됩니다 — 누군가 태스크의 상태를 직접 변경하거나, 선행 태스크가 완료되어 후속 태스크가 현재 상태로 재평가될 때 모두 해당합니다.",
-			"noRules": "아직 규칙 없음",
-			"statusPlaceholder": "상태",
-			"memberPlaceholder": "담당자"
-		},
 		"statusTransitions": {
 			"title": "상태 워크플로우",
 			"hint": "각 상태에서 작업이 완료되었을 때 다음에 올 상태를 정의합니다. 이는 후속 태스크의 잠금을 해제하고, AI 에이전트 담당자에게 추측 대신 다음에 설정해야 할 상태를 정확히 알려줍니다. 워크플로우 생성 시 프로젝트의 상태로부터 기본 체인이 자동으로 생성됩니다.",
 			"nextStatusLabel": "다음 상태",
 			"terminalOption": "__END__",
 			"ambiguousWarning": "다음 상태가 없는 상태가 정확히 하나여야 합니다(이것이 워크플로우의 __END__ 상태가 됩니다). 현재 {{count}}개 구성됨."
+		},
+		"statusRulesPage": {
+			"title": "상태 규칙",
+			"subtitle": "작업이 특정 상태에 도달하면 자동으로 담당자에게 할당합니다"
 		}
 	}
 }

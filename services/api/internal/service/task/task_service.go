@@ -15,15 +15,23 @@ var reservedSystemTypeNames = map[string]bool{
 }
 
 // workflowStatusChecker is the minimal workflow-domain surface the task
-// service needs to refuse deleting a status that automation still depends on.
+// service needs to refuse deleting a status an automation workflow's
+// status-transition chain still depends on.
 type workflowStatusChecker interface {
 	StatusUsedByWorkflow(ctx context.Context, statusID uuid.UUID) (bool, error)
+}
+
+// statusRuleChecker is the minimal status-assignment-rule-domain surface
+// the task service needs to refuse deleting a status a rule still targets.
+type statusRuleChecker interface {
+	StatusUsedByStatusRule(ctx context.Context, statusID uuid.UUID) (bool, error)
 }
 
 // Service is the concrete implementation of taskdom.Service.
 type Service struct {
 	repo            taskdom.Repository
 	workflowChecker workflowStatusChecker
+	ruleChecker     statusRuleChecker
 }
 
 // New returns a configured task service.
@@ -32,10 +40,19 @@ func New(repo taskdom.Repository) *Service {
 }
 
 // WithWorkflowStatusChecker configures a check that refuses to delete a task
-// status still referenced by an automation workflow's rules or transitions.
-// Without it, DeleteTaskStatus does not guard against this (e.g. in tests).
+// status still referenced by an automation workflow's status-transition
+// chain. Without it, DeleteTaskStatus does not guard against this (e.g. in
+// tests).
 func (s *Service) WithWorkflowStatusChecker(checker workflowStatusChecker) *Service {
 	s.workflowChecker = checker
+	return s
+}
+
+// WithStatusRuleChecker configures a check that refuses to delete a task
+// status still targeted by a status-assignment rule. Without it,
+// DeleteTaskStatus does not guard against this (e.g. in tests).
+func (s *Service) WithStatusRuleChecker(checker statusRuleChecker) *Service {
+	s.ruleChecker = checker
 	return s
 }
 
@@ -225,6 +242,15 @@ func (s *Service) DeleteTaskStatus(ctx context.Context, projectID, id uuid.UUID)
 		}
 		if used {
 			return taskdom.ErrStatusInUseByWorkflow
+		}
+	}
+	if s.ruleChecker != nil {
+		used, err := s.ruleChecker.StatusUsedByStatusRule(ctx, id)
+		if err != nil {
+			return err
+		}
+		if used {
+			return taskdom.ErrStatusInUseByStatusRule
 		}
 	}
 	return s.repo.DeleteTaskStatus(ctx, id)

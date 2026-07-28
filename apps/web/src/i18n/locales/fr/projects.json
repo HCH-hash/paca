@@ -581,6 +581,81 @@
 				"cancel": "Annuler",
 				"deletePermanently": "Supprimer définitivement"
 			}
+		},
+		"statusRules": {
+			"title": "Règles d'attribution par statut",
+			"description": "Attribue automatiquement une tâche à un membre dès qu'elle atteint un statut configuré, sur l'ensemble du projet, avec possibilité de filtrer les tâches concernées.",
+			"newRule": "Nouvelle règle",
+			"ruleCount_one": "{{count}} règle",
+			"ruleCount_other": "{{count}} règles",
+			"assignsTo": "Attribue à {{member}}",
+			"allTasks": "Toutes les tâches",
+			"filterCount_one": "{{count}} filtre",
+			"filterCount_other": "{{count}} filtres",
+			"enabledLabel": "Activée",
+			"editRule": "Modifier la règle",
+			"deleteRule": "Supprimer la règle",
+			"empty": {
+				"title": "Aucune règle d'attribution par statut pour le moment",
+				"description": "Créez une règle pour attribuer automatiquement des tâches à un membre lorsqu'elles atteignent un statut donné.",
+				"createRule": "Créer la première règle"
+			},
+			"deleteDialog": {
+				"title": "Supprimer la règle",
+				"description": "Supprimer « {{name}} » ? Cette action est irréversible.",
+				"cancel": "Annuler",
+				"confirm": "Supprimer la règle"
+			},
+			"formDialog": {
+				"createTitle": "Nouvelle règle d'attribution par statut",
+				"editTitle": "Modifier la règle d'attribution par statut",
+				"description": "Attribue automatiquement les tâches correspondantes à un membre lorsqu'elles atteignent le statut sélectionné.",
+				"nameLabel": "Nom",
+				"namePlaceholder": "ex. Attribuer les bugs à QA",
+				"statusLabel": "Statut déclencheur",
+				"statusPlaceholder": "Statut",
+				"statusImmutableHint": "Le statut ne peut pas être modifié après la création — supprimez puis recréez la règle.",
+				"assigneeLabel": "Attribuer à",
+				"assigneePlaceholder": "Membre",
+				"enabledLabel": "Activée",
+				"enabledHint": "Désactivez pour conserver cette règle configurée sans qu'elle s'exécute.",
+				"filterTitle": "Filtres",
+				"filterHint": "Limitez cette règle aux tâches correspondant à tous les critères ci-dessous. Laissez tout vide pour l'appliquer à toutes les tâches de ce statut.",
+				"cancel": "Annuler",
+				"saveChanges": "Enregistrer les modifications",
+				"createRule": "Créer la règle",
+				"errors": {
+					"nameInvalid": "Le nom est obligatoire.",
+					"crossProject": "Le statut ou le membre sélectionné n'appartient pas à ce projet.",
+					"unknownCustomField": "Le filtre référence un champ personnalisé qui n'existe plus.",
+					"saveFailed": "Échec de l'enregistrement de la règle. Veuillez réessayer."
+				},
+				"filters": {
+					"taskType": "Type de tâche",
+					"sprint": "Sprint",
+					"assignee": "Responsable actuel",
+					"tags": "Étiquettes",
+					"importance": "Importance",
+					"storyPoints": "Story points",
+					"dates": "Dates",
+					"startDate": "Date de début",
+					"dueDate": "Date d'échéance",
+					"any": "Tous",
+					"selectedCount_one": "{{count}} sélectionné(s)",
+					"selectedCount_other": "{{count}} sélectionné(s)",
+					"backlogOnly": "Backlog uniquement (sans sprint)",
+					"unassigned": "Non attribué",
+					"noSprints": "Ce projet n'a pas encore de sprints",
+					"noTaskTypes": "Ce projet n'a pas encore de types de tâche",
+					"min": "Min",
+					"max": "Max",
+					"yes": "Oui",
+					"no": "Non",
+					"contains": "Contient…",
+					"customized": "Personnalisé",
+					"addTag": "Ajouter une étiquette"
+				}
+			}
 		}
 	},
 	"taskStatuses": {
@@ -1277,19 +1352,16 @@
 			"cancel": "Annuler",
 			"removeConfirmAction": "Retirer"
 		},
-		"statusRules": {
-			"title": "Règles statut → assigné",
-			"hint": "Assigne automatiquement une tâche à un membre lorsqu'elle passe à l'un de ces statuts. Cela s'applique à toute tâche de ce workflow — que quelqu'un change directement le statut d'une tâche, ou qu'une tâche prédécesseure se termine et qu'une tâche en aval soit réévaluée selon son statut actuel.",
-			"noRules": "Aucune règle pour le moment",
-			"statusPlaceholder": "Statut",
-			"memberPlaceholder": "Assigné"
-		},
 		"statusTransitions": {
 			"title": "Workflow de statuts",
 			"hint": "Définit quel statut vient ensuite une fois le travail terminé à chaque statut. Cela débloque les tâches suivantes et indique à un agent IA assigné exactement quel statut définir ensuite, au lieu de deviner. Une chaîne par défaut est générée automatiquement à partir des statuts du projet à la création du workflow.",
 			"nextStatusLabel": "Statut suivant",
 			"terminalOption": "__END__",
 			"ambiguousWarning": "Exactement un statut doit n'avoir aucun statut suivant (il devient le statut de fin du workflow). Actuellement : {{count}} configuré(s)."
+		},
+		"statusRulesPage": {
+			"title": "Règles de statut",
+			"subtitle": "Attribuez automatiquement les tâches à un membre lorsqu'elles atteignent un statut donné"
 		}
 	}
 }

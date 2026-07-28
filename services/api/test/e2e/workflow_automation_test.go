@@ -17,10 +17,10 @@ import (
 // ---------------------------------------------------------------------------
 
 // startWorkflowConsumer wires up and starts a real worker.WorkflowConsumer
-// against the shared Valkey stream, so that task status changes made through
-// the HTTP API actually get evaluated against active workflows — exercising
-// the automation *engine*, not just the workflow CRUD surface. It is stopped
-// automatically at test cleanup.
+// against the shared Valkey stream, so that a predecessor task reaching done
+// actually gets evaluated for its "predecessor done" cascade to successor
+// nodes — exercising the automation *engine*, not just the workflow CRUD
+// surface. It is stopped automatically at test cleanup.
 //
 // This is deliberately NOT part of newE2EEnv: only the tests in this file pay
 // the cost of running a consumer (Stop() can block for up to a few seconds
@@ -28,10 +28,23 @@ import (
 func startWorkflowConsumer(t *testing.T, env *e2eEnv) *worker.WorkflowConsumer {
 	t.Helper()
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	wc := worker.NewWorkflowConsumer(env.redisClient, env.workflowRepo, env.taskRepo, env.taskSvc, env.activitySvc, nil, log)
+	wc := worker.NewWorkflowConsumer(env.redisClient, env.workflowRepo, env.taskRepo, env.statusRuleSvc, log)
 	wc.Start(env.ctx)
 	t.Cleanup(wc.Stop)
 	return wc
+}
+
+// startStatusRuleConsumer wires up and starts a real worker.StatusRuleConsumer
+// against the shared Valkey stream, so that ANY task's status change — not
+// just tasks wired into a workflow — gets evaluated against project-wide
+// status-assignment rules. It is stopped automatically at test cleanup.
+func startStatusRuleConsumer(t *testing.T, env *e2eEnv) *worker.StatusRuleConsumer {
+	t.Helper()
+	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	sc := worker.NewStatusRuleConsumer(env.redisClient, env.taskRepo, env.statusRuleSvc, log)
+	sc.Start(env.ctx)
+	t.Cleanup(sc.Stop)
+	return sc
 }
 
 // getTaskViaAPI fetches a task and returns its decoded response body.
@@ -63,12 +76,18 @@ func setTaskStatusViaAPI(t *testing.T, env *e2eEnv, client *http.Client, token, 
 	assertStatus(t, resp, http.StatusOK)
 }
 
-// setStatusRuleViaAPI creates or updates a workflow's status->assignee rule.
-func setStatusRuleViaAPI(t *testing.T, env *e2eEnv, client *http.Client, token, projectID, workflowID, statusID, assigneeMemberID string) {
+// createStatusRuleViaAPI creates a project-wide, unfiltered status->assignee
+// rule via the standalone status-assignment-rules endpoint — independent of
+// any workflow.
+func createStatusRuleViaAPI(t *testing.T, env *e2eEnv, client *http.Client, token, projectID, statusID, assigneeMemberID string) {
 	t.Helper()
-	body := jsonBody(t, map[string]any{"status_id": statusID, "assignee_member_id": assigneeMemberID})
+	body := jsonBody(t, map[string]any{
+		"name":               "e2e rule " + uuid.NewString(),
+		"status_id":          statusID,
+		"assignee_member_id": assigneeMemberID,
+	})
 	req := mustRequest(env.ctx, t, http.MethodPost,
-		fmt.Sprintf("%s/api/v1/projects/%s/workflows/%s/status-rules", env.base, projectID, workflowID), body)
+		fmt.Sprintf("%s/api/v1/projects/%s/status-assignment-rules", env.base, projectID), body)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp := mustDo(t, client, req)
@@ -129,34 +148,35 @@ func addProjectMemberWithWorkflowPerms(t *testing.T, env *e2eEnv, ownerClient *h
 }
 
 // ---------------------------------------------------------------------------
-// Event 1: a task's own status change is looked up in the workflow's rules.
+// Event 1: a task's own status change is looked up against project-wide
+// status-assignment rules — independent of any automation workflow. This is
+// the crux of the split: the task below is never added to any workflow at
+// all, proving the rule applies to the whole project rather than only to
+// tasks wired into a workflow canvas.
 // ---------------------------------------------------------------------------
 
-func TestE2EWorkflowAutomation_StatusChangeReassignsTask(t *testing.T) {
+func TestE2EStatusRule_StatusChangeReassignsTask_NoWorkflowInvolved(t *testing.T) {
 	env := newE2EEnv(t)
-	startWorkflowConsumer(t, env)
+	startStatusRuleConsumer(t, env)
 
-	ownerUsername := "workflow-auto-owner-" + uuid.NewString()
-	seedTaskMemberUser(t, env, ownerUsername, "workflowautoowner1")
-	ownerClient, ownerToken := taskMemberLogin(t, env, ownerUsername, "workflowautoowner1")
+	ownerUsername := "status-rule-owner-" + uuid.NewString()
+	seedTaskMemberUser(t, env, ownerUsername, "statusruleowner1")
+	ownerClient, ownerToken := taskMemberLogin(t, env, ownerUsername, "statusruleowner1")
 	projID := createProjectForTasksViaAPI(t, env, ownerClient, ownerToken)
 
-	// A second real member, distinct from the auto-seeded default assignee
-	// (the workflow creator), so a successful reassignment is unambiguous.
+	// A second real member, distinct from the task's creator, so a
+	// successful reassignment is unambiguous.
 	secondMemberID := addProjectMemberWithWorkflowPerms(t, env, ownerClient, ownerToken, projID,
-		"workflow-auto-member-"+uuid.NewString(), "workflowautomember1")
+		"status-rule-member-"+uuid.NewString(), "statusrulemember1")
 
 	statuses := listTaskStatusesViaAPI(t, env, ownerClient, ownerToken, projID)
 	inProgressID := statusIDByName(statuses, "In Progress")
 
-	task := createTaskViaAPI(t, env, ownerClient, ownerToken, projID, "Automated Task")
-	workflowID := createWorkflowViaAPI(t, env, ownerClient, ownerToken, projID, "Status Rule Automation")
-	addWorkflowNodeViaAPI(t, env, ownerClient, ownerToken, projID, workflowID, task)
+	// Deliberately NOT added to any workflow.
+	task := createTaskViaAPI(t, env, ownerClient, ownerToken, projID, "Un-workflowed Task")
 
-	// Explicit rule: reaching "In Progress" reassigns to the second member.
-	setStatusRuleViaAPI(t, env, ownerClient, ownerToken, projID, workflowID, inProgressID, secondMemberID)
-
-	activateWorkflowViaAPI(t, env, ownerClient, ownerToken, projID, workflowID)
+	// Project-wide rule: reaching "In Progress" reassigns to the second member.
+	createStatusRuleViaAPI(t, env, ownerClient, ownerToken, projID, inProgressID, secondMemberID)
 
 	setTaskStatusViaAPI(t, env, ownerClient, ownerToken, projID, task, inProgressID)
 
@@ -172,6 +192,7 @@ func TestE2EWorkflowAutomation_StatusChangeReassignsTask(t *testing.T) {
 func TestE2EWorkflowAutomation_TaskDoneCascadesAssignmentToSuccessor(t *testing.T) {
 	env := newE2EEnv(t)
 	startWorkflowConsumer(t, env)
+	startStatusRuleConsumer(t, env) // drives taskA's own reassignment below (event 1)
 
 	ownerUsername := "workflow-cascade-owner-" + uuid.NewString()
 	seedTaskMemberUser(t, env, ownerUsername, "workflowcascadeowner1")
@@ -198,9 +219,11 @@ func TestE2EWorkflowAutomation_TaskDoneCascadesAssignmentToSuccessor(t *testing.
 	addWorkflowEdgeViaAPI(t, env, ownerClient, ownerToken, projID, workflowID, nodeAID, nodeBID)
 
 	// Backlog (taskB's current status, untouched) reassigns to member2;
-	// Done reassigns whichever task just finished to member3.
-	setStatusRuleViaAPI(t, env, ownerClient, ownerToken, projID, workflowID, backlogID, member2ID)
-	setStatusRuleViaAPI(t, env, ownerClient, ownerToken, projID, workflowID, doneID, member3ID)
+	// Done reassigns whichever task just finished to member3. Both rules are
+	// project-wide (no workflow involved in creating them), matching how the
+	// shared rule engine is actually consulted by the workflow's cascade.
+	createStatusRuleViaAPI(t, env, ownerClient, ownerToken, projID, backlogID, member2ID)
+	createStatusRuleViaAPI(t, env, ownerClient, ownerToken, projID, doneID, member3ID)
 
 	activateWorkflowViaAPI(t, env, ownerClient, ownerToken, projID, workflowID)
 
@@ -231,11 +254,6 @@ func TestE2EWorkflowAutomation_AndJoinWaitsForAllPredecessors(t *testing.T) {
 	ownerClient, ownerToken := taskMemberLogin(t, env, ownerUsername, "workflowandjoinowner1")
 	projID := createProjectForTasksViaAPI(t, env, ownerClient, ownerToken)
 
-	ownerUser, err := env.userRepo.FindByUsername(env.ctx, ownerUsername)
-	if err != nil {
-		t.Fatalf("find owner user: %v", err)
-	}
-
 	secondMemberID := addProjectMemberWithWorkflowPerms(t, env, ownerClient, ownerToken, projID,
 		"workflow-andjoin-member-"+uuid.NewString(), "workflowandjoinmemberpass")
 
@@ -258,23 +276,24 @@ func TestE2EWorkflowAutomation_AndJoinWaitsForAllPredecessors(t *testing.T) {
 	addWorkflowEdgeViaAPI(t, env, ownerClient, ownerToken, projID, workflowID, nodeCID, nodeBID)
 
 	// Backlog (taskB's current status) reassigns to the second member once
-	// the AND-join is satisfied by both predecessors.
-	setStatusRuleViaAPI(t, env, ownerClient, ownerToken, projID, workflowID, backlogID, secondMemberID)
+	// the AND-join is satisfied by both predecessors. Project-wide (no
+	// workflow involved in creating it), matching how the shared rule engine
+	// is actually consulted by the workflow's cascade.
+	createStatusRuleViaAPI(t, env, ownerClient, ownerToken, projID, backlogID, secondMemberID)
 
 	activateWorkflowViaAPI(t, env, ownerClient, ownerToken, projID, workflowID)
-
-	members := listProjectMembersViaAPI(t, env, ownerClient, ownerToken, projID)
-	ownerMemberID := memberIDForUser(members, ownerUser.ID.String())
 
 	t.Run("single_predecessor_done_does_not_fire_the_join", func(t *testing.T) {
 		setTaskStatusViaAPI(t, env, ownerClient, ownerToken, projID, taskA, doneID)
 
-		// Synchronize on taskA's own reassignment (its Done rule falls back to
-		// the auto-seeded default: the workflow's creator) to know the
-		// consumer has finished processing this event, including the
-		// AND-join evaluation for taskB, which runs synchronously within the
-		// same handler call.
-		waitForTaskAssignee(t, env, ownerClient, ownerToken, projID, taskA, ownerMemberID, 20*time.Second)
+		// No status-assignment rule targets "Done" in this test, so taskA's
+		// own status change produces no observable side effect to
+		// synchronize on (event 1 is handled by a wholly separate consumer
+		// group now, with no ordering guarantee relative to WorkflowConsumer
+		// processing the same message) — a bounded wait is the best
+		// available signal that the AND-join, if it were going to fire
+		// early, would have by now.
+		time.Sleep(3 * time.Second)
 
 		dataB := getTaskViaAPI(t, env, ownerClient, ownerToken, projID, taskB)
 		if assignees, ok := dataB["assignee_ids"].([]any); ok && len(assignees) > 0 {

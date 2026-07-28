@@ -22,7 +22,6 @@ import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AddWorkflowNodeModal } from "@/components/projects/automation/add-workflow-node-modal";
 import { WorkflowCanvas } from "@/components/projects/automation/workflow-canvas";
-import { WorkflowStatusRulesPanel } from "@/components/projects/automation/workflow-status-rules-panel";
 import { WorkflowStatusTransitionsPanel } from "@/components/projects/automation/workflow-status-transitions-panel";
 import { TaskDetailModal } from "@/components/projects/interactions/task-detail-modal";
 import type { TaskFieldUpdate } from "@/components/projects/interactions/view-utils";
@@ -359,21 +358,12 @@ function WorkflowBuilderPage() {
 
 			<div className="flex flex-1 min-h-0 relative">
 				{sidebarOpen && (
-					<div className="w-80 shrink-0 border-r border-border/50 overflow-y-auto p-4 space-y-6">
+					<div className="w-80 shrink-0 border-r border-border/50 overflow-y-auto p-4">
 						<WorkflowStatusTransitionsPanel
 							projectId={projectId}
 							workflowId={workflowId}
 							transitions={graph.status_transitions}
 							statuses={statuses}
-							canEdit={canEditGraph}
-						/>
-						<div className="border-t border-border/30" />
-						<WorkflowStatusRulesPanel
-							projectId={projectId}
-							workflowId={workflowId}
-							rules={graph.status_rules}
-							statuses={statuses}
-							members={members}
 							canEdit={canEditGraph}
 						/>
 					</div>

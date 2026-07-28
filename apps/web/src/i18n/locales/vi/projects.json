@@ -581,6 +581,81 @@
 				"cancel": "Hủy",
 				"deletePermanently": "Xóa vĩnh viễn"
 			}
+		},
+		"statusRules": {
+			"title": "Quy tắc gán theo trạng thái",
+			"description": "Tự động gán công việc cho một thành viên bất cứ khi nào công việc đạt đến trạng thái bạn cấu hình — trên toàn bộ dự án, có thể giới hạn theo bộ lọc.",
+			"newRule": "Quy tắc mới",
+			"ruleCount_one": "{{count}} quy tắc",
+			"ruleCount_other": "{{count}} quy tắc",
+			"assignsTo": "Gán cho {{member}}",
+			"allTasks": "Tất cả công việc",
+			"filterCount_one": "{{count}} bộ lọc",
+			"filterCount_other": "{{count}} bộ lọc",
+			"enabledLabel": "Bật",
+			"editRule": "Sửa quy tắc",
+			"deleteRule": "Xóa quy tắc",
+			"empty": {
+				"title": "Chưa có quy tắc gán theo trạng thái nào",
+				"description": "Tạo quy tắc để tự động gán công việc cho một thành viên khi công việc đạt đến trạng thái nhất định.",
+				"createRule": "Tạo quy tắc đầu tiên"
+			},
+			"deleteDialog": {
+				"title": "Xóa quy tắc",
+				"description": "Xóa \"{{name}}\"? Hành động này không thể hoàn tác.",
+				"cancel": "Hủy",
+				"confirm": "Xóa quy tắc"
+			},
+			"formDialog": {
+				"createTitle": "Quy tắc gán theo trạng thái mới",
+				"editTitle": "Sửa quy tắc gán theo trạng thái",
+				"description": "Tự động gán các công việc phù hợp cho một thành viên khi đạt đến trạng thái đã chọn.",
+				"nameLabel": "Tên",
+				"namePlaceholder": "ví dụ: Gán lỗi cho QA",
+				"statusLabel": "Trạng thái kích hoạt",
+				"statusPlaceholder": "Trạng thái",
+				"statusImmutableHint": "Không thể thay đổi trạng thái sau khi tạo — hãy xóa và tạo lại.",
+				"assigneeLabel": "Gán cho",
+				"assigneePlaceholder": "Thành viên",
+				"enabledLabel": "Bật",
+				"enabledHint": "Tắt để giữ cấu hình quy tắc mà không cho chạy.",
+				"filterTitle": "Bộ lọc",
+				"filterHint": "Giới hạn quy tắc này cho các công việc khớp với tất cả tiêu chí bên dưới. Để trống tất cả để áp dụng cho mọi công việc ở trạng thái này.",
+				"cancel": "Hủy",
+				"saveChanges": "Lưu thay đổi",
+				"createRule": "Tạo quy tắc",
+				"errors": {
+					"nameInvalid": "Tên là bắt buộc.",
+					"crossProject": "Trạng thái hoặc thành viên đã chọn không thuộc dự án này.",
+					"unknownCustomField": "Bộ lọc tham chiếu đến một trường tùy chỉnh không còn tồn tại.",
+					"saveFailed": "Không thể lưu quy tắc. Vui lòng thử lại."
+				},
+				"filters": {
+					"taskType": "Loại công việc",
+					"sprint": "Sprint",
+					"assignee": "Người phụ trách hiện tại",
+					"tags": "Thẻ",
+					"importance": "Mức độ quan trọng",
+					"storyPoints": "Story point",
+					"dates": "Ngày",
+					"startDate": "Ngày bắt đầu",
+					"dueDate": "Ngày đến hạn",
+					"any": "Bất kỳ",
+					"selectedCount_one": "Đã chọn {{count}}",
+					"selectedCount_other": "Đã chọn {{count}}",
+					"backlogOnly": "Chỉ backlog (không có sprint)",
+					"unassigned": "Chưa gán",
+					"noSprints": "Dự án này chưa có sprint nào",
+					"noTaskTypes": "Dự án này chưa có loại công việc nào",
+					"min": "Tối thiểu",
+					"max": "Tối đa",
+					"yes": "Có",
+					"no": "Không",
+					"contains": "Chứa…",
+					"customized": "Đã tùy chỉnh",
+					"addTag": "Thêm thẻ"
+				}
+			}
 		}
 	},
 	"taskStatuses": {
@@ -1277,19 +1352,16 @@
 			"cancel": "Hủy",
 			"removeConfirmAction": "Xóa"
 		},
-		"statusRules": {
-			"title": "Quy tắc trạng thái → người được giao",
-			"hint": "Tự động giao một công việc cho thành viên bất cứ khi nào nó chuyển sang một trong các trạng thái này. Điều này áp dụng cho bất kỳ công việc nào trong quy trình này — dù ai đó thay đổi trực tiếp trạng thái của công việc, hay một công việc tiền nhiệm hoàn tất khiến công việc kế tiếp được đánh giá lại theo trạng thái hiện tại của nó.",
-			"noRules": "Chưa có quy tắc nào",
-			"statusPlaceholder": "Trạng thái",
-			"memberPlaceholder": "Người được giao"
-		},
 		"statusTransitions": {
 			"title": "Quy trình trạng thái",
 			"hint": "Xác định trạng thái nào sẽ đến tiếp theo khi công việc ở mỗi trạng thái hoàn tất. Điều này mở khóa các công việc kế tiếp và cho agent AI được giao biết chính xác trạng thái cần đặt tiếp theo, thay vì phải đoán. Một chuỗi mặc định được tự động tạo từ các trạng thái của dự án khi quy trình được tạo.",
 			"nextStatusLabel": "Trạng thái tiếp theo",
 			"terminalOption": "__END__",
 			"ambiguousWarning": "Phải có chính xác một trạng thái không có trạng thái tiếp theo (đây sẽ là trạng thái __END__ của quy trình). Hiện tại: {{count}} được cấu hình."
+		},
+		"statusRulesPage": {
+			"title": "Quy tắc trạng thái",
+			"subtitle": "Tự động gán công việc cho một thành viên khi đạt đến trạng thái nhất định"
 		}
 	}
 }

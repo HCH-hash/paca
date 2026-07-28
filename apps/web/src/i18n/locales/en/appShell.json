@@ -26,6 +26,8 @@
 		"agents": "Agents",
 		"conversations": "Conversations",
 		"automation": "Automation",
+		"automationWorkflow": "Workflow",
+		"automationStatusRules": "Status Rules",
 		"team": "Team",
 		"settings": "Settings",
 		"changelog": "What's New"

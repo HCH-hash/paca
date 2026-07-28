@@ -47,29 +47,6 @@ func WorkflowFromEntity(w *workflowdom.Workflow) WorkflowResponse {
 	}
 }
 
-// StatusRuleResponse is the public representation of a workflow's
-// status->assignee rule.
-type StatusRuleResponse struct {
-	ID               uuid.UUID `json:"id"`
-	WorkflowID       uuid.UUID `json:"workflow_id"`
-	StatusID         uuid.UUID `json:"status_id"`
-	AssigneeMemberID uuid.UUID `json:"assignee_member_id"`
-	CreatedAt        time.Time `json:"created_at"`
-	UpdatedAt        time.Time `json:"updated_at"`
-}
-
-// StatusRuleFromEntity maps a domain StatusRule to a StatusRuleResponse DTO.
-func StatusRuleFromEntity(r *workflowdom.StatusRule) StatusRuleResponse {
-	return StatusRuleResponse{
-		ID:               r.ID,
-		WorkflowID:       r.WorkflowID,
-		StatusID:         r.StatusID,
-		AssigneeMemberID: r.AssigneeMemberID,
-		CreatedAt:        r.CreatedAt,
-		UpdatedAt:        r.UpdatedAt,
-	}
-}
-
 // NodeResponse is the public representation of a workflow node.
 type NodeResponse struct {
 	ID         uuid.UUID `json:"id"`
@@ -139,13 +116,12 @@ func EdgeFromEntity(e *workflowdom.Edge) EdgeResponse {
 }
 
 // WorkflowGraphResponse is the single-fetch response used to hydrate the
-// canvas builder: the workflow plus all of its nodes, edges, the workflow's
-// single shared list of status rules, and its status-transition chain.
+// canvas builder: the workflow plus all of its nodes, edges, and its
+// status-transition chain.
 type WorkflowGraphResponse struct {
 	Workflow          WorkflowResponse           `json:"workflow"`
 	Nodes             []NodeResponse             `json:"nodes"`
 	Edges             []EdgeResponse             `json:"edges"`
-	StatusRules       []StatusRuleResponse       `json:"status_rules"`
 	StatusTransitions []StatusTransitionResponse `json:"status_transitions"`
 }
 
@@ -159,10 +135,6 @@ func WorkflowGraphFromEntity(g *workflowdom.Graph) WorkflowGraphResponse {
 	for _, e := range g.Edges {
 		edges = append(edges, EdgeFromEntity(e))
 	}
-	rules := make([]StatusRuleResponse, 0, len(g.StatusRules))
-	for _, r := range g.StatusRules {
-		rules = append(rules, StatusRuleFromEntity(r))
-	}
 	transitions := make([]StatusTransitionResponse, 0, len(g.StatusTransitions))
 	for _, t := range g.StatusTransitions {
 		transitions = append(transitions, StatusTransitionFromEntity(t))
@@ -172,7 +144,6 @@ func WorkflowGraphFromEntity(g *workflowdom.Graph) WorkflowGraphResponse {
 		Workflow:          WorkflowFromEntity(g.Workflow),
 		Nodes:             nodes,
 		Edges:             edges,
-		StatusRules:       rules,
 		StatusTransitions: transitions,
 	}
 }
@@ -190,15 +161,6 @@ type AddWorkflowNodeRequest struct {
 type UpdateWorkflowNodeRequest struct {
 	PosX *float64 `json:"pos_x"`
 	PosY *float64 `json:"pos_y"`
-}
-
-// --- Status rule DTOs -------------------------------------------------------
-
-// SetWorkflowStatusRuleRequest is the body for
-// POST /projects/:projectId/workflows/:workflowId/status-rules.
-type SetWorkflowStatusRuleRequest struct {
-	StatusID         uuid.UUID `json:"status_id"`
-	AssigneeMemberID uuid.UUID `json:"assignee_member_id"`
 }
 
 // --- Status transition DTOs -------------------------------------------------

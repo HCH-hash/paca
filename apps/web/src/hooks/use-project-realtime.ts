@@ -38,9 +38,12 @@
 // workflow.* events → invalidate ["projects", projectId, "workflows"] (the
 //                  automation list/graph queries) and ["projects", projectId,
 //                  "tasks"] (covers workflowsForTaskQueryOptions, which hangs
-//                  off "tasks" rather than "workflows", plus the
-//                  workflow.assigned bonus case — the automation engine
-//                  reassigning a task should refresh that task's data too).
+//                  off "tasks" rather than "workflows").
+// status_rule.* events → invalidate ["projects", projectId, "tasks"] and
+//                  ["projects", projectId, "status-assignment-rules"] — the
+//                  project-wide status-assignment-rule engine reassigning a
+//                  task (independent of any workflow) should refresh both
+//                  that task's data and the rules list.
 //
 // More granular invalidations (e.g. specific taskId) are avoided intentionally:
 // the event payload fields are not yet stabilised and broad invalidation is
@@ -96,17 +99,29 @@ export function useProjectRealtime(projectId: string): void {
 				return;
 			}
 
-			// workflow.* events: covers both graph-structure changes (node/edge/
-			// rule/transition/lifecycle edits on the automation builder) and the
-			// task-scoped workflow.assigned event (the automation engine
-			// reassigning a task) — invalidate both prefixes unconditionally
-			// rather than branching per sub-type.
+			// workflow.* events: graph-structure changes (node/edge/transition/
+			// lifecycle edits on the automation builder) — invalidate both
+			// prefixes unconditionally rather than branching per sub-type.
 			if (type.startsWith("workflow.")) {
 				void queryClient.invalidateQueries({
 					queryKey: ["projects", projectId, "workflows"],
 				});
 				void queryClient.invalidateQueries({
 					queryKey: ["projects", projectId, "tasks"],
+				});
+				return;
+			}
+
+			// status_rule.assigned: the project-wide status-assignment-rule
+			// engine reassigned a task — independent of any workflow, and
+			// possibly triggered by a workflow's predecessor-done cascade, so
+			// refresh both the task data and the rules list.
+			if (type.startsWith("status_rule.")) {
+				void queryClient.invalidateQueries({
+					queryKey: ["projects", projectId, "tasks"],
+				});
+				void queryClient.invalidateQueries({
+					queryKey: ["projects", projectId, "status-assignment-rules"],
 				});
 				return;
 			}

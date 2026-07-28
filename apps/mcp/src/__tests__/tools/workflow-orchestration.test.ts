@@ -4,7 +4,6 @@ import {
 	anyHasFailure,
 	applyEdges,
 	applyNodes,
-	applyStatusRules,
 	applyStatusTransitions,
 	buildGraphIndexes,
 	type CategoryResult,
@@ -28,8 +27,6 @@ function makeClient(overrides: Record<string, any> = {}) {
 		addWorkflowNode: vi.fn(),
 		updateWorkflowNode: vi.fn(),
 		removeWorkflowNode: vi.fn(),
-		setWorkflowStatusRule: vi.fn(),
-		removeWorkflowStatusRule: vi.fn(),
 		setWorkflowStatusTransition: vi.fn(),
 		removeWorkflowStatusTransition: vi.fn(),
 		addWorkflowEdge: vi.fn(),
@@ -61,17 +58,6 @@ function makeEdge(id: string, sourceNodeId: string, targetNodeId: string) {
 		source_node_id: sourceNodeId,
 		target_node_id: targetNodeId,
 		created_at: "2024-01-01T00:00:00Z",
-	};
-}
-
-function makeRule(id: string, statusId: string, assigneeMemberId: string) {
-	return {
-		id,
-		workflow_id: "wf1",
-		status_id: statusId,
-		assignee_member_id: assigneeMemberId,
-		created_at: "2024-01-01T00:00:00Z",
-		updated_at: "2024-01-01T00:00:00Z",
 	};
 }
 
@@ -320,26 +306,22 @@ describe("buildGraphIndexes", () => {
 			workflow: {} as any,
 			nodes: [],
 			edges: [],
-			status_rules: [],
 			status_transitions: [],
 		});
 		expect(indexes.taskToNode.size).toBe(0);
-		expect(indexes.statusToRule.size).toBe(0);
 		expect(indexes.statusToTransition.size).toBe(0);
 		expect(indexes.nodePairToEdge.size).toBe(0);
 	});
 
-	it("indexes nodes, rules, transitions, and edges by their natural keys", () => {
+	it("indexes nodes, transitions, and edges by their natural keys", () => {
 		const indexes = buildGraphIndexes({
 			workflow: {} as any,
 			nodes: [makeNode("n1", "t1"), makeNode("n2", "t2")],
 			edges: [makeEdge("e1", "n1", "n2")],
-			status_rules: [makeRule("r1", "s-ready", "m1")],
 			status_transitions: [makeTransition("tr1", "s-ready", "s-done")],
 		});
 		expect(indexes.taskToNode.get("t1")).toBe("n1");
 		expect(indexes.taskToNode.get("t2")).toBe("n2");
-		expect(indexes.statusToRule.get("s-ready")).toBe("r1");
 		expect(indexes.statusToTransition.get("s-ready")).toBe("tr1");
 		expect(indexes.nodePairToEdge.get("n1|n2")).toBe("e1");
 	});
@@ -349,7 +331,6 @@ describe("buildGraphIndexes", () => {
 			workflow: {} as any,
 			nodes: [makeNode("n1", "t1"), makeNode("n2", "t2")],
 			edges: [makeEdge("e1", "n1", "n2")],
-			status_rules: [],
 			status_transitions: [],
 		});
 		expect(indexes.nodePairToEdge.get("n1|n2")).toBe("e1");
@@ -361,7 +342,6 @@ describe("emptyGraphIndexes", () => {
 	it("returns all-empty maps", () => {
 		const indexes = emptyGraphIndexes();
 		expect(indexes.taskToNode.size).toBe(0);
-		expect(indexes.statusToRule.size).toBe(0);
 		expect(indexes.statusToTransition.size).toBe(0);
 		expect(indexes.nodePairToEdge.size).toBe(0);
 	});
@@ -370,9 +350,7 @@ describe("emptyGraphIndexes", () => {
 		const a = emptyGraphIndexes();
 		const b = emptyGraphIndexes();
 		a.taskToNode.set("t1", "n1");
-		a.statusToRule.set("s1", "r1");
 		expect(b.taskToNode.size).toBe(0);
-		expect(b.statusToRule.size).toBe(0);
 	});
 });
 
@@ -757,150 +735,6 @@ describe("applyNodes", () => {
 		const removeOrder = client.removeWorkflowNode.mock.invocationCallOrder[0];
 		const addOrder = client.addWorkflowNode.mock.invocationCallOrder[0];
 		expect(removeOrder).toBeLessThan(addOrder);
-	});
-});
-
-// ---------------------------------------------------------------------------
-// applyStatusRules
-// ---------------------------------------------------------------------------
-
-describe("applyStatusRules", () => {
-	it("skips removing a statusId with no existing rule", async () => {
-		const client = makeClient();
-		const { removed } = await applyStatusRules(
-			makeCtx(client),
-			undefined,
-			["s-ghost"],
-			emptyGraphIndexes(),
-		);
-		expect(client.removeWorkflowStatusRule).not.toHaveBeenCalled();
-		expect(removed.items).toEqual([
-			{
-				key: "s-ghost",
-				outcome: "skipped",
-				detail: "no status rule exists for this statusId in the workflow",
-			},
-		]);
-	});
-
-	it("removes a rule by statusId and updates the index", async () => {
-		const client = makeClient({
-			removeWorkflowStatusRule: vi.fn().mockResolvedValue(undefined),
-		});
-		const indexes = emptyGraphIndexes();
-		indexes.statusToRule.set("s-ready", "r1");
-		const { removed } = await applyStatusRules(
-			makeCtx(client),
-			undefined,
-			["s-ready"],
-			indexes,
-		);
-		expect(client.removeWorkflowStatusRule).toHaveBeenCalledWith(
-			"p1",
-			"wf1",
-			"r1",
-		);
-		expect(removed.items).toEqual([{ key: "s-ready", outcome: "removed" }]);
-		expect(indexes.statusToRule.has("s-ready")).toBe(false);
-	});
-
-	it("keeps the index entry and reports failure when the removal rejects", async () => {
-		const client = makeClient({
-			removeWorkflowStatusRule: vi.fn().mockRejectedValue(new Error("nope")),
-		});
-		const indexes = emptyGraphIndexes();
-		indexes.statusToRule.set("s-ready", "r1");
-		const { removed } = await applyStatusRules(
-			makeCtx(client),
-			undefined,
-			["s-ready"],
-			indexes,
-		);
-		expect(removed.items).toEqual([
-			{ key: "s-ready", outcome: "failed", detail: "nope" },
-		]);
-		expect(indexes.statusToRule.get("s-ready")).toBe("r1");
-	});
-
-	it("creates a rule for a statusId with none yet", async () => {
-		const client = makeClient({
-			setWorkflowStatusRule: vi
-				.fn()
-				.mockResolvedValue(makeRule("r1", "s-ready", "m1")),
-		});
-		const indexes = emptyGraphIndexes();
-		const { set } = await applyStatusRules(
-			makeCtx(client),
-			[{ statusId: "s-ready", assigneeMemberId: "m1" }],
-			undefined,
-			indexes,
-		);
-		expect(client.setWorkflowStatusRule).toHaveBeenCalledWith("p1", "wf1", {
-			status_id: "s-ready",
-			assignee_member_id: "m1",
-		});
-		expect(set.items).toEqual([{ key: "s-ready", outcome: "created" }]);
-		expect(indexes.statusToRule.get("s-ready")).toBe("r1");
-	});
-
-	it("reports 'updated' (not 'created') when a rule already existed for that statusId", async () => {
-		const client = makeClient({
-			setWorkflowStatusRule: vi
-				.fn()
-				.mockResolvedValue(makeRule("r1", "s-ready", "m2")),
-		});
-		const indexes = emptyGraphIndexes();
-		indexes.statusToRule.set("s-ready", "r1");
-		const { set } = await applyStatusRules(
-			makeCtx(client),
-			[{ statusId: "s-ready", assigneeMemberId: "m2" }],
-			undefined,
-			indexes,
-		);
-		expect(set.items).toEqual([{ key: "s-ready", outcome: "updated" }]);
-	});
-
-	it("leaves the index untouched and reports failure when setWorkflowStatusRule rejects", async () => {
-		const client = makeClient({
-			setWorkflowStatusRule: vi.fn().mockRejectedValue(new Error("bad")),
-		});
-		const indexes = emptyGraphIndexes();
-		const { set } = await applyStatusRules(
-			makeCtx(client),
-			[{ statusId: "s-ready", assigneeMemberId: "m1" }],
-			undefined,
-			indexes,
-		);
-		expect(set.items).toEqual([
-			{ key: "s-ready", outcome: "failed", detail: "bad" },
-		]);
-		expect(indexes.statusToRule.has("s-ready")).toBe(false);
-	});
-
-	it("dedupes repeated entries for the same statusId, applying only the last", async () => {
-		const client = makeClient({
-			setWorkflowStatusRule: vi
-				.fn()
-				.mockImplementation((_p: string, _w: string, input: any) =>
-					Promise.resolve(
-						makeRule("r1", input.status_id, input.assignee_member_id),
-					),
-				),
-		});
-		await applyStatusRules(
-			makeCtx(client),
-			[
-				{ statusId: "s-ready", assigneeMemberId: "m1" },
-				{ statusId: "s-ready", assigneeMemberId: "m2" },
-			],
-			undefined,
-			emptyGraphIndexes(),
-		);
-		expect(client.setWorkflowStatusRule).toHaveBeenCalledTimes(1);
-		expect(client.setWorkflowStatusRule).toHaveBeenCalledWith("p1", "wf1", {
-			status_id: "s-ready",
-			assignee_member_id: "m2",
-		});
 	});
 });
 

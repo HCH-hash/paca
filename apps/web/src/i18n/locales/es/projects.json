@@ -581,6 +581,81 @@
 				"cancel": "Cancelar",
 				"deletePermanently": "Eliminar permanentemente"
 			}
+		},
+		"statusRules": {
+			"title": "Reglas de asignación por estado",
+			"description": "Asigna automáticamente una tarea a un miembro cada vez que alcance un estado que configures, en todo el proyecto, opcionalmente limitado con filtros.",
+			"newRule": "Nueva regla",
+			"ruleCount_one": "{{count}} regla",
+			"ruleCount_other": "{{count}} reglas",
+			"assignsTo": "Asigna a {{member}}",
+			"allTasks": "Todas las tareas",
+			"filterCount_one": "{{count}} filtro",
+			"filterCount_other": "{{count}} filtros",
+			"enabledLabel": "Activada",
+			"editRule": "Editar regla",
+			"deleteRule": "Eliminar regla",
+			"empty": {
+				"title": "Aún no hay reglas de asignación por estado",
+				"description": "Crea una regla para asignar automáticamente tareas a un miembro cuando alcancen un estado determinado.",
+				"createRule": "Crear primera regla"
+			},
+			"deleteDialog": {
+				"title": "Eliminar regla",
+				"description": "¿Eliminar \"{{name}}\"? Esta acción no se puede deshacer.",
+				"cancel": "Cancelar",
+				"confirm": "Eliminar regla"
+			},
+			"formDialog": {
+				"createTitle": "Nueva regla de asignación por estado",
+				"editTitle": "Editar regla de asignación por estado",
+				"description": "Asigna automáticamente las tareas coincidentes a un miembro cuando alcancen el estado seleccionado.",
+				"nameLabel": "Nombre",
+				"namePlaceholder": "ej. Asignar errores a QA",
+				"statusLabel": "Estado desencadenante",
+				"statusPlaceholder": "Estado",
+				"statusImmutableHint": "El estado no se puede cambiar después de crear la regla; elimínala y vuelve a crearla.",
+				"assigneeLabel": "Asignar a",
+				"assigneePlaceholder": "Miembro",
+				"enabledLabel": "Activada",
+				"enabledHint": "Desactívala para mantener esta regla configurada sin que se ejecute.",
+				"filterTitle": "Filtros",
+				"filterHint": "Limita esta regla a las tareas que coincidan con todos los criterios siguientes. Déjalo todo vacío para aplicarla a todas las tareas en este estado.",
+				"cancel": "Cancelar",
+				"saveChanges": "Guardar cambios",
+				"createRule": "Crear regla",
+				"errors": {
+					"nameInvalid": "El nombre es obligatorio.",
+					"crossProject": "El estado o miembro seleccionado no pertenece a este proyecto.",
+					"unknownCustomField": "El filtro hace referencia a un campo personalizado que ya no existe.",
+					"saveFailed": "No se pudo guardar la regla. Inténtalo de nuevo."
+				},
+				"filters": {
+					"taskType": "Tipo de tarea",
+					"sprint": "Sprint",
+					"assignee": "Responsable actual",
+					"tags": "Etiquetas",
+					"importance": "Importancia",
+					"storyPoints": "Story points",
+					"dates": "Fechas",
+					"startDate": "Fecha de inicio",
+					"dueDate": "Fecha límite",
+					"any": "Cualquiera",
+					"selectedCount_one": "{{count}} seleccionados",
+					"selectedCount_other": "{{count}} seleccionados",
+					"backlogOnly": "Solo backlog (sin sprint)",
+					"unassigned": "Sin asignar",
+					"noSprints": "Este proyecto aún no tiene sprints",
+					"noTaskTypes": "Este proyecto aún no tiene tipos de tarea",
+					"min": "Mín",
+					"max": "Máx",
+					"yes": "Sí",
+					"no": "No",
+					"contains": "Contiene…",
+					"customized": "Personalizado",
+					"addTag": "Añadir etiqueta"
+				}
+			}
 		}
 	},
 	"taskStatuses": {
@@ -1277,19 +1352,16 @@
 			"cancel": "Cancelar",
 			"removeConfirmAction": "Quitar"
 		},
-		"statusRules": {
-			"title": "Reglas estado → asignado",
-			"hint": "Asigna automáticamente una tarea a un miembro cuando cambie a alguno de estos estados. Esto se aplica a cualquier tarea de este flujo — ya sea que alguien cambie el estado de una tarea directamente, o que una tarea predecesora termine y una tarea posterior se reevalúe según su estado actual.",
-			"noRules": "Aún no hay reglas",
-			"statusPlaceholder": "Estado",
-			"memberPlaceholder": "Asignado"
-		},
 		"statusTransitions": {
 			"title": "Flujo de estados",
 			"hint": "Define qué estado viene después una vez que el trabajo en cada estado está terminado. Esto desbloquea tareas posteriores y le dice a un agente de IA asignado exactamente qué estado establecer a continuación, en lugar de adivinar. Se genera automáticamente una cadena predeterminada a partir de los estados del proyecto al crear el flujo.",
 			"nextStatusLabel": "Siguiente estado",
 			"terminalOption": "__END__",
 			"ambiguousWarning": "Exactamente un estado debe no tener siguiente estado (se convierte en el estado de finalización del flujo). Actualmente: {{count}} configurado(s)."
+		},
+		"statusRulesPage": {
+			"title": "Reglas de estado",
+			"subtitle": "Asigna tareas automáticamente a un miembro cuando alcanzan un estado determinado"
 		}
 	}
 }

@@ -39,6 +39,7 @@ import (
 	globalrolesvc "github.com/Paca-AI/api/internal/service/globalrole"
 	projectsvc "github.com/Paca-AI/api/internal/service/project"
 	sprintsvc "github.com/Paca-AI/api/internal/service/sprint"
+	statusrulesvc "github.com/Paca-AI/api/internal/service/statusrule"
 	tasksvc "github.com/Paca-AI/api/internal/service/task"
 	usersvc "github.com/Paca-AI/api/internal/service/user"
 	workflowsvc "github.com/Paca-AI/api/internal/service/workflow"
@@ -102,6 +103,8 @@ type e2eEnv struct {
 	apiKeySvc      *apikeysvc.Service
 	workflowRepo   *pgRepo.WorkflowRepository
 	workflowSvc    *workflowsvc.Service
+	statusRuleRepo *pgRepo.StatusRuleRepository
+	statusRuleSvc  *statusrulesvc.Service
 	agentRepo      *pgRepo.AgentRepository
 	agentSvc       *agentsvc.Service
 	activitySvc    *tasksvc.ActivitySvc
@@ -223,6 +226,8 @@ func newE2EEnv(t *testing.T) *e2eEnv {
 	activityService := tasksvc.NewActivityService(activityRepo, projectRepo, publisher)
 	workflowRepo := pgRepo.NewWorkflowRepository(db)
 	workflowService := workflowsvc.New(workflowRepo, taskRepo, projectRepo, publisher)
+	statusRuleRepo := pgRepo.NewStatusRuleRepository(db)
+	statusRuleService := statusrulesvc.New(statusRuleRepo, taskService, projectRepo, activityService, publisher)
 	agentRepo := pgRepo.NewAgentRepository(db)
 	pluginRepoForAgent := pgRepo.NewPluginRepository(db)
 	agentService := agentsvc.New(agentRepo, noopMemberCacheInvalidator{}, publisher, pluginRepoForAgent)
@@ -268,6 +273,7 @@ func newE2EEnv(t *testing.T) *e2eEnv {
 		Attachment:           handler.NewAttachmentHandler(attachmentService),
 		APIKey:               handler.NewAPIKeyHandler(apiKeyService),
 		Workflow:             handler.NewWorkflowHandler(workflowService),
+		StatusRule:           handler.NewStatusRuleHandler(statusRuleService),
 		Agent:                handler.NewAgentHandler(agentService, "", "", "").WithMemberRepo(projectRepo),
 		Conversation:         handler.NewConversationHandler(agentService),
 		Log:                  log,
@@ -305,6 +311,8 @@ func newE2EEnv(t *testing.T) *e2eEnv {
 		apiKeySvc:      apiKeyService,
 		workflowRepo:   workflowRepo,
 		workflowSvc:    workflowService,
+		statusRuleRepo: statusRuleRepo,
+		statusRuleSvc:  statusRuleService,
 		agentRepo:      agentRepo,
 		agentSvc:       agentService,
 		activitySvc:    activityService,

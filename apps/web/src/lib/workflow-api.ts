@@ -18,15 +18,6 @@ export interface Workflow {
 	updated_at: string;
 }
 
-export interface WorkflowStatusRule {
-	id: string;
-	workflow_id: string;
-	status_id: string;
-	assignee_member_id: string;
-	created_at: string;
-	updated_at: string;
-}
-
 export interface WorkflowStatusTransition {
 	id: string;
 	workflow_id: string;
@@ -58,7 +49,6 @@ export interface WorkflowGraph {
 	workflow: Workflow;
 	nodes: WorkflowNode[];
 	edges: WorkflowEdge[];
-	status_rules: WorkflowStatusRule[];
 	status_transitions: WorkflowStatusTransition[];
 }
 
@@ -189,29 +179,6 @@ export async function removeWorkflowNode(
 ): Promise<void> {
 	await apiClient.instance.delete(
 		`/projects/${projectId}/workflows/${workflowId}/nodes/${nodeId}`,
-	);
-}
-
-// ── Status rules ────────────────────────────────────────────────────────────
-
-export async function setWorkflowStatusRule(
-	projectId: string,
-	workflowId: string,
-	payload: { status_id: string; assignee_member_id: string },
-): Promise<WorkflowStatusRule> {
-	const { data } = await apiClient.instance.post<
-		SuccessEnvelope<WorkflowStatusRule>
-	>(`/projects/${projectId}/workflows/${workflowId}/status-rules`, payload);
-	return data.data;
-}
-
-export async function removeWorkflowStatusRule(
-	projectId: string,
-	workflowId: string,
-	ruleId: string,
-): Promise<void> {
-	await apiClient.instance.delete(
-		`/projects/${projectId}/workflows/${workflowId}/status-rules/${ruleId}`,
 	);
 }
 

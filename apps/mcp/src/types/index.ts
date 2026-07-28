@@ -746,15 +746,6 @@ export interface Workflow {
 	updated_at: string;
 }
 
-export interface WorkflowStatusRule {
-	id: string;
-	workflow_id: string;
-	status_id: string;
-	assignee_member_id: string;
-	created_at: string;
-	updated_at: string;
-}
-
 export interface WorkflowStatusTransition {
 	id: string;
 	workflow_id: string;
@@ -786,7 +777,6 @@ export interface WorkflowGraph {
 	workflow: Workflow;
 	nodes: WorkflowNode[];
 	edges: WorkflowEdge[];
-	status_rules: WorkflowStatusRule[];
 	status_transitions: WorkflowStatusTransition[];
 }
 
@@ -811,11 +801,6 @@ export interface UpdateWorkflowNodeInput {
 	pos_y?: number;
 }
 
-export interface SetWorkflowStatusRuleInput {
-	status_id: string;
-	assignee_member_id: string;
-}
-
 export interface SetWorkflowStatusTransitionInput {
 	status_id: string;
 	next_status_id?: string | null;
@@ -824,6 +809,71 @@ export interface SetWorkflowStatusTransitionInput {
 export interface AddWorkflowEdgeInput {
 	source_node_id: string;
 	target_node_id: string;
+}
+
+// ==================== Status Assignment Rules ====================
+// Project-wide, filterable status->assignee automation, independent of any
+// workflow. See services/api/internal/domain/statusrule for the source of
+// truth this mirrors.
+
+export interface IntRange {
+	min: number;
+	max: number;
+}
+
+export interface CustomFieldFilterSpec {
+	values?: string[];
+	min?: number;
+	max?: number;
+	after?: string;
+	before?: string;
+	contains?: string;
+}
+
+export interface TaskFilterSpec {
+	task_type_ids?: string[];
+	sprint_ids?: string[];
+	backlog_only?: boolean;
+	assignee_ids?: string[];
+	assignee_null?: boolean;
+	tags?: string[];
+	importance_ranges?: IntRange[];
+	story_points_min?: number;
+	story_points_max?: number;
+	start_date_after?: string;
+	start_date_before?: string;
+	due_date_after?: string;
+	due_date_before?: string;
+	custom_fields?: Record<string, CustomFieldFilterSpec>;
+}
+
+export interface StatusAssignmentRule {
+	id: string;
+	project_id: string;
+	name: string;
+	status_id: string;
+	assignee_member_id: string;
+	filter: TaskFilterSpec;
+	priority: number;
+	enabled: boolean;
+	created_by?: string | null;
+	created_at: string;
+	updated_at: string;
+}
+
+export interface CreateStatusAssignmentRuleInput {
+	name: string;
+	status_id: string;
+	assignee_member_id: string;
+	filter?: TaskFilterSpec;
+	enabled?: boolean;
+}
+
+export interface UpdateStatusAssignmentRuleInput {
+	name?: string;
+	assignee_member_id?: string;
+	filter?: TaskFilterSpec;
+	enabled?: boolean;
 }
 
 // ==================== API Response Helpers ====================

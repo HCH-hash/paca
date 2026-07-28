@@ -48,6 +48,14 @@ export const ApiErrorCode = {
 	TaskStatusNameInvalid: "TASK_STATUS_NAME_INVALID",
 	TaskStatusCategoryInvalid: "TASK_STATUS_CATEGORY_INVALID",
 	TaskStatusReorderInvalid: "TASK_STATUS_REORDER_INVALID",
+	TaskStatusInUseByStatusRule: "TASK_STATUS_IN_USE_BY_STATUS_RULE",
+
+	// Status assignment rule domain errors.
+	StatusRuleNotFound: "STATUS_RULE_NOT_FOUND",
+	StatusRuleNameInvalid: "STATUS_RULE_NAME_INVALID",
+	StatusRuleCrossProject: "STATUS_RULE_CROSS_PROJECT",
+	StatusRuleFilterUnknownCustomField: "STATUS_RULE_FILTER_UNKNOWN_CUSTOM_FIELD",
+	StatusRuleReorderInvalid: "STATUS_RULE_REORDER_INVALID",
 
 	// Task domain errors.
 	TaskNotFound: "TASK_NOT_FOUND",

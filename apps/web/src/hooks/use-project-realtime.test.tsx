@@ -138,7 +138,7 @@ describe("useProjectRealtime", () => {
 		});
 	});
 
-	it("invalidates workflows and tasks query keys on workflow.assigned events", () => {
+	it("invalidates tasks and status-assignment-rules query keys on status_rule.assigned events", () => {
 		renderHook(() => useProjectRealtime("proj-abc"));
 
 		const [, listener] = mocks.socket.on.mock.calls[0] as [
@@ -147,15 +147,15 @@ describe("useProjectRealtime", () => {
 		];
 
 		listener({
-			type: "workflow.assigned",
+			type: "status_rule.assigned",
 			payload: { project_id: "proj-abc", task_id: "task-1" },
 		});
 
 		expect(mocks.invalidateQueries).toHaveBeenCalledWith({
-			queryKey: ["projects", "proj-abc", "workflows"],
+			queryKey: ["projects", "proj-abc", "tasks"],
 		});
 		expect(mocks.invalidateQueries).toHaveBeenCalledWith({
-			queryKey: ["projects", "proj-abc", "tasks"],
+			queryKey: ["projects", "proj-abc", "status-assignment-rules"],
 		});
 	});
 

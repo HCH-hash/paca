@@ -3,10 +3,15 @@ import type { WorkflowGraph } from "../types/index.js";
 
 /**
  * Shared apply-logic for `create_workflow`/`update_workflow`: both accept a
- * full graph (nodes/status rules/status transitions/edges) addressed by
- * taskId/statusId/task-pairs rather than internal node/rule/transition/edge
+ * full graph (nodes/status transitions/edges) addressed by
+ * taskId/statusId/task-pairs rather than internal node/transition/edge
  * UUIDs, and both need to translate that into the granular REST calls the
  * backend actually exposes. This module is that translation layer.
+ *
+ * Reassignment (status->assignee "rules") is NOT part of this graph anymore
+ * — it's a separate, project-wide concern handled by the standalone
+ * status_assignment_rule tools (see status-rule-tools.ts), independent of
+ * any workflow.
  */
 
 // --- Item input shapes (already Zod-validated by the caller) -----------------
@@ -18,11 +23,6 @@ export interface NodeSetInput {
 	// posX/posY tool-description guidance in workflow-tools.ts.
 	posX: number;
 	posY: number;
-}
-
-export interface StatusRuleSetInput {
-	statusId: string;
-	assigneeMemberId: string;
 }
 
 export interface StatusTransitionSetInput {
@@ -113,7 +113,6 @@ export function formatCategoryResult(
 
 export interface GraphIndexes {
 	taskToNode: Map<string, string>;
-	statusToRule: Map<string, string>;
 	statusToTransition: Map<string, string>;
 	nodePairToEdge: Map<string, string>;
 }
@@ -128,10 +127,6 @@ export function buildGraphIndexes(graph: WorkflowGraph): GraphIndexes {
 	for (const n of graph.nodes) {
 		taskToNode.set(n.task_id, n.id);
 	}
-	const statusToRule = new Map<string, string>();
-	for (const r of graph.status_rules) {
-		statusToRule.set(r.status_id, r.id);
-	}
 	const statusToTransition = new Map<string, string>();
 	for (const t of graph.status_transitions) {
 		statusToTransition.set(t.status_id, t.id);
@@ -140,14 +135,13 @@ export function buildGraphIndexes(graph: WorkflowGraph): GraphIndexes {
 	for (const e of graph.edges) {
 		nodePairToEdge.set(nodePairKey(e.source_node_id, e.target_node_id), e.id);
 	}
-	return { taskToNode, statusToRule, statusToTransition, nodePairToEdge };
+	return { taskToNode, statusToTransition, nodePairToEdge };
 }
 
 /** Empty indexes for contexts with no prior graph (e.g. a brand-new workflow). */
 export function emptyGraphIndexes(): GraphIndexes {
 	return {
 		taskToNode: new Map(),
-		statusToRule: new Map(),
 		statusToTransition: new Map(),
 		nodePairToEdge: new Map(),
 	};
@@ -323,71 +317,6 @@ export async function applyNodes(
 			} catch (err) {
 				pushResult(setResult, {
 					key: item.taskId,
-					outcome: "failed",
-					detail: extractApiErrorMessage(err),
-				});
-			}
-		}),
-	);
-
-	return { removed: removedResult, set: setResult };
-}
-
-// --- Status rules ----------------------------------------------------------------
-
-export async function applyStatusRules(
-	ctx: OrchestrationContext,
-	set: StatusRuleSetInput[] | undefined,
-	remove: string[] | undefined,
-	indexes: GraphIndexes,
-): Promise<{ removed: CategoryResult; set: CategoryResult }> {
-	const { client, projectId, workflowId } = ctx;
-
-	// See applyNodes: each item targets a distinct statusId, so these run
-	// concurrently instead of one REST round-trip at a time.
-	const removedResult = emptyCategoryResult();
-	await Promise.all(
-		[...new Set(remove ?? [])].map(async (statusId) => {
-			const ruleId = indexes.statusToRule.get(statusId);
-			if (!ruleId) {
-				pushResult(removedResult, {
-					key: statusId,
-					outcome: "skipped",
-					detail: "no status rule exists for this statusId in the workflow",
-				});
-				return;
-			}
-			try {
-				await client.removeWorkflowStatusRule(projectId, workflowId, ruleId);
-				indexes.statusToRule.delete(statusId);
-				pushResult(removedResult, { key: statusId, outcome: "removed" });
-			} catch (err) {
-				pushResult(removedResult, {
-					key: statusId,
-					outcome: "failed",
-					detail: extractApiErrorMessage(err),
-				});
-			}
-		}),
-	);
-
-	const setResult = emptyCategoryResult();
-	await Promise.all(
-		dedupeByKey(set ?? [], (i) => i.statusId).map(async (item) => {
-			const existed = indexes.statusToRule.has(item.statusId);
-			try {
-				const rule = await client.setWorkflowStatusRule(projectId, workflowId, {
-					status_id: item.statusId,
-					assignee_member_id: item.assigneeMemberId,
-				});
-				indexes.statusToRule.set(item.statusId, rule.id);
-				pushResult(setResult, {
-					key: item.statusId,
-					outcome: existed ? "updated" : "created",
-				});
-			} catch (err) {
-				pushResult(setResult, {
-					key: item.statusId,
 					outcome: "failed",
 					detail: extractApiErrorMessage(err),
 				});

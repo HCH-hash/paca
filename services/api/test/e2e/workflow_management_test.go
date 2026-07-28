@@ -560,33 +560,12 @@ func TestE2EWorkflowManagement_NodesAndEdges(t *testing.T) {
 // Status rules and status transitions ("status workflow")
 // ---------------------------------------------------------------------------
 
-func TestE2EWorkflowManagement_StatusRulesAndTransitions(t *testing.T) {
+func TestE2EWorkflowManagement_StatusTransitions(t *testing.T) {
 	env := newE2EEnv(t)
-	ownerUsername := "workflow-rules-owner-" + uuid.NewString()
-	seedTaskMemberUser(t, env, ownerUsername, "workflowrules1")
-	ownerClient, ownerToken := taskMemberLogin(t, env, ownerUsername, "workflowrules1")
+	ownerUsername := "workflow-transitions-owner-" + uuid.NewString()
+	seedTaskMemberUser(t, env, ownerUsername, "workflowtransitions1")
+	ownerClient, ownerToken := taskMemberLogin(t, env, ownerUsername, "workflowtransitions1")
 	projID := createProjectForTasksViaAPI(t, env, ownerClient, ownerToken)
-
-	ownerUser, err := env.userRepo.FindByUsername(env.ctx, ownerUsername)
-	if err != nil {
-		t.Fatalf("find owner user: %v", err)
-	}
-
-	memberUsername := "workflow-rules-member-" + uuid.NewString()
-	seedUser(t, env, memberUsername, "memberpass1", "Second Member")
-	memberUser, err := env.userRepo.FindByUsername(env.ctx, memberUsername)
-	if err != nil {
-		t.Fatalf("find member user: %v", err)
-	}
-	editorRoleID := createProjectRoleWithPermsViaAPI(t, env, ownerClient, ownerToken, projID, "editor-"+uuid.NewString(),
-		map[string]any{"projects.read": true, "tasks.read": true, "tasks.write": true, "workflows.read": true, "workflows.write": true})
-	addMemberViaAPI(t, env, ownerClient, ownerToken, projID, memberUser.ID.String(), editorRoleID)
-
-	members := listProjectMembersViaAPI(t, env, ownerClient, ownerToken, projID)
-	secondMemberID := memberIDForUser(members, memberUser.ID.String())
-	if secondMemberID == "" {
-		t.Fatal("expected second member to be present")
-	}
 
 	statuses := listTaskStatusesViaAPI(t, env, ownerClient, ownerToken, projID)
 	backlogID := statusIDByName(statuses, "Backlog")
@@ -594,103 +573,7 @@ func TestE2EWorkflowManagement_StatusRulesAndTransitions(t *testing.T) {
 	inProgressID := statusIDByName(statuses, "In Progress")
 	doneID := statusIDByName(statuses, "Done")
 
-	workflowID := createWorkflowViaAPI(t, env, ownerClient, ownerToken, projID, "Assignment Rules")
-
-	var todoRuleID string
-
-	t.Run("set_status_rule_updates_auto_seeded_rule_in_place", func(t *testing.T) {
-		body := jsonBody(t, map[string]any{"status_id": todoID, "assignee_member_id": secondMemberID})
-		req := mustRequest(env.ctx, t, http.MethodPost,
-			fmt.Sprintf("%s/api/v1/projects/%s/workflows/%s/status-rules", env.base, projID, workflowID), body)
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+ownerToken)
-		resp := mustDo(t, ownerClient, req)
-		defer func() { _ = resp.Body.Close() }()
-		assertStatus(t, resp, http.StatusCreated)
-		var env2 envelope
-		decodeJSON(t, resp, &env2)
-		data := assertDataMap(t, env2)
-		todoRuleID, _ = data["id"].(string)
-		if assignee, _ := data["assignee_member_id"].(string); assignee != secondMemberID {
-			t.Errorf("expected assignee %q, got %q", secondMemberID, assignee)
-		}
-
-		graph := getWorkflowGraphViaAPI(t, env, ownerClient, ownerToken, projID, workflowID)
-		rules, _ := graph["status_rules"].([]any)
-		if len(rules) != 4 {
-			t.Errorf("expected rule count to remain 4 (upsert, not insert), got %d", len(rules))
-		}
-		matches := 0
-		for _, item := range rules {
-			r, _ := item.(map[string]any)
-			if sid, _ := r["status_id"].(string); sid == todoID {
-				matches++
-				if assignee, _ := r["assignee_member_id"].(string); assignee != secondMemberID {
-					t.Errorf("expected assignee %q for Todo rule, got %q", secondMemberID, assignee)
-				}
-			}
-		}
-		if matches != 1 {
-			t.Errorf("expected exactly 1 rule for the Todo status, got %d", matches)
-		}
-	})
-
-	t.Run("set_status_rule_cross_project_status_rejected", func(t *testing.T) {
-		otherProjID := createProjectForTasksViaAPI(t, env, ownerClient, ownerToken)
-		otherStatuses := listTaskStatusesViaAPI(t, env, ownerClient, ownerToken, otherProjID)
-		otherStatusID := statusIDByName(otherStatuses, "Backlog")
-
-		body := jsonBody(t, map[string]any{"status_id": otherStatusID, "assignee_member_id": secondMemberID})
-		req := mustRequest(env.ctx, t, http.MethodPost,
-			fmt.Sprintf("%s/api/v1/projects/%s/workflows/%s/status-rules", env.base, projID, workflowID), body)
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+ownerToken)
-		resp := mustDo(t, ownerClient, req)
-		defer func() { _ = resp.Body.Close() }()
-		assertStatus(t, resp, http.StatusBadRequest)
-		assertErrorCode(t, resp, "WORKFLOW_STATUS_RULE_CROSS_PROJECT")
-	})
-
-	t.Run("set_status_rule_cross_project_member_rejected", func(t *testing.T) {
-		otherProjID := createProjectForTasksViaAPI(t, env, ownerClient, ownerToken)
-		otherMembers := listProjectMembersViaAPI(t, env, ownerClient, ownerToken, otherProjID)
-		otherMemberID := memberIDForUser(otherMembers, ownerUser.ID.String())
-
-		body := jsonBody(t, map[string]any{"status_id": backlogID, "assignee_member_id": otherMemberID})
-		req := mustRequest(env.ctx, t, http.MethodPost,
-			fmt.Sprintf("%s/api/v1/projects/%s/workflows/%s/status-rules", env.base, projID, workflowID), body)
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+ownerToken)
-		resp := mustDo(t, ownerClient, req)
-		defer func() { _ = resp.Body.Close() }()
-		assertStatus(t, resp, http.StatusBadRequest)
-		assertErrorCode(t, resp, "WORKFLOW_STATUS_RULE_CROSS_PROJECT")
-	})
-
-	t.Run("remove_status_rule", func(t *testing.T) {
-		req := mustRequest(env.ctx, t, http.MethodDelete,
-			fmt.Sprintf("%s/api/v1/projects/%s/workflows/%s/status-rules/%s", env.base, projID, workflowID, todoRuleID), nil)
-		req.Header.Set("Authorization", "Bearer "+ownerToken)
-		resp := mustDo(t, ownerClient, req)
-		defer func() { _ = resp.Body.Close() }()
-		assertStatus(t, resp, http.StatusNoContent)
-
-		graph := getWorkflowGraphViaAPI(t, env, ownerClient, ownerToken, projID, workflowID)
-		rules, _ := graph["status_rules"].([]any)
-		if len(rules) != 3 {
-			t.Errorf("expected 3 rules remaining after removal, got %d", len(rules))
-		}
-	})
-
-	t.Run("remove_nonexistent_status_rule_not_found", func(t *testing.T) {
-		req := mustRequest(env.ctx, t, http.MethodDelete,
-			fmt.Sprintf("%s/api/v1/projects/%s/workflows/%s/status-rules/%s", env.base, projID, workflowID, uuid.NewString()), nil)
-		req.Header.Set("Authorization", "Bearer "+ownerToken)
-		resp := mustDo(t, ownerClient, req)
-		defer func() { _ = resp.Body.Close() }()
-		assertStatus(t, resp, http.StatusNotFound)
-		assertErrorCode(t, resp, "WORKFLOW_STATUS_RULE_NOT_FOUND")
-	})
+	workflowID := createWorkflowViaAPI(t, env, ownerClient, ownerToken, projID, "Transition Chain")
 
 	t.Run("set_status_transition_updates_auto_seeded_chain_in_place", func(t *testing.T) {
 		// Default chain: Backlog->Todo->InProgress->Done(nil). Rewire Backlog to skip Todo.

@@ -48,15 +48,18 @@ const (
 	// conversation session triggered by a task assignment.
 	ActivityTypeAgentSessionStarted ActivityType = "agent.session.started"
 
-	// --- Automation workflow events -------------------------------------------
+	// --- Status-assignment-rule events -----------------------------------------
 
-	// ActivityTypeWorkflowAssigned is recorded when the automation-workflow
-	// engine reassigns a task, either because the task's own status matched
-	// one of its node's rules, or because a predecessor node just finished.
-	// Content carries {workflow_id, workflow_name, reason, old_assignee,
-	// new_assignee} so the activity feed can attribute the change to the
-	// workflow instead of a human actor.
-	ActivityTypeWorkflowAssigned ActivityType = "workflow.assigned"
+	// ActivityTypeStatusRuleAssigned is recorded when the status-assignment-
+	// rule engine reassigns a task, either because the task's own status
+	// change matched a project-wide rule, or because an automation
+	// workflow's predecessor-done cascade re-evaluated a downstream task's
+	// current status against the same rule engine. Content carries
+	// {rule_id, rule_name, reason, old_assignees, new_assignee} (plus, for
+	// the workflow-cascade case, workflow_id/workflow_name/next_status_name)
+	// so the activity feed can attribute the change to the rule instead of
+	// a human actor.
+	ActivityTypeStatusRuleAssigned ActivityType = "status_rule.assigned"
 )
 
 // Activity is a single entry in a task's activity log.  It represents either

@@ -7,7 +7,6 @@ import {
 	anyHasFailure,
 	applyEdges,
 	applyNodes,
-	applyStatusRules,
 	applyStatusTransitions,
 	buildGraphIndexes,
 	type CategoryResult,
@@ -34,9 +33,6 @@ const TASK_ID_DESC =
 const STATUS_ID_DESC =
 	"The technical UUID of a task status in this project. Use list_task_statuses to get status IDs.";
 
-const MEMBER_ID_DESC =
-	"The technical UUID of the project member (human or agent) to auto-assign. Use list_project_members to get member IDs.";
-
 const WorkflowStatusEnum = z.enum(["draft", "active", "archived"]);
 
 // .strict() on every item schema below is deliberate: agents occasionally
@@ -52,13 +48,6 @@ const NodeSetInputSchema = z
 		taskId: z.string(),
 		posX: z.number(),
 		posY: z.number(),
-	})
-	.strict();
-
-const StatusRuleSetInputSchema = z
-	.object({
-		statusId: z.string(),
-		assigneeMemberId: z.string(),
 	})
 	.strict();
 
@@ -87,7 +76,6 @@ const CreateWorkflowSchema = z.object({
 	name: z.string().trim().min(1),
 	description: z.string().optional(),
 	nodes: z.array(NodeSetInputSchema).optional(),
-	statusRules: z.array(StatusRuleSetInputSchema).optional(),
 	statusTransitions: z.array(StatusTransitionSetInputSchema).optional(),
 	edges: z.array(EdgeRefSchema).optional(),
 	activate: z.boolean().optional(),
@@ -102,12 +90,6 @@ const UpdateWorkflowSchema = z.object({
 	nodes: z
 		.object({
 			set: z.array(NodeSetInputSchema).optional(),
-			remove: z.array(z.string()).optional(),
-		})
-		.optional(),
-	statusRules: z
-		.object({
-			set: z.array(StatusRuleSetInputSchema).optional(),
 			remove: z.array(z.string()).optional(),
 		})
 		.optional(),
@@ -149,15 +131,6 @@ const NODE_ITEM_JSON_SCHEMA = {
 	required: ["taskId", "posX", "posY"],
 };
 
-const STATUS_RULE_ITEM_JSON_SCHEMA = {
-	type: "object" as const,
-	properties: {
-		statusId: { type: "string", description: STATUS_ID_DESC },
-		assigneeMemberId: { type: "string", description: MEMBER_ID_DESC },
-	},
-	required: ["statusId", "assigneeMemberId"],
-};
-
 const STATUS_TRANSITION_ITEM_JSON_SCHEMA = {
 	type: "object" as const,
 	properties: {
@@ -193,11 +166,9 @@ export function getWorkflowTools(): Tool[] {
 		{
 			name: "get_workflow",
 			description:
-				"Get information about automation workflows in a project. Pass workflowId to fetch one workflow's full graph: every node (the task it wraps), every edge (dependency link between two nodes), the workflow's single shared list of status->assignee rules, and its status-transition chain (the 'status workflow'). Omit workflowId to list all workflows in the project instead (optionally filtered by status) — e.g. to find a workflow's ID before fetching its graph.\n\n" +
-				"An automation workflow is a dependency graph over EXISTING tasks, plus TWO shared, workflow-level lookup tables:\n" +
-				"- Status rules: whenever any task in the workflow changes to a configured status, it's auto-assigned to that rule's member. create_workflow auto-seeds one of these per status (see its description) — a rule you didn't explicitly set is a valid default, not an error; change its assignee via statusRules.set (upserts by statusId) instead of removing it first.\n" +
-				"- Status transitions ('status workflow'): for each status, which status comes next once work at that status is done. The workflow's done status is whichever status has no next status configured — used to unlock downstream tasks, and to tell an AI-agent assignee exactly what status to set next instead of guessing.\n" +
-				"- Edges are plain links: once a source task reaches the workflow's done status, the target task is re-evaluated using ITS OWN current status against the same status rules (no status is changed on the target — only the assignment). If a target has multiple incoming edges, ALL predecessors must be done before it fires.\n\n" +
+				"Get information about automation workflows in a project. Pass workflowId to fetch one workflow's full graph: every node (the task it wraps), every edge (dependency link between two nodes), and its status-transition chain (the 'status workflow'). Omit workflowId to list all workflows in the project instead (optionally filtered by status) — e.g. to find a workflow's ID before fetching its graph.\n\n" +
+				"An automation workflow is a dependency graph over EXISTING tasks, plus a shared, workflow-level status-transition chain ('status workflow'): for each status, which status comes next once work at that status is done. The workflow's done status is whichever status has no next status configured — used to unlock downstream tasks, and to tell an AI-agent assignee exactly what status to set next instead of guessing. Edges are plain links: once a source task reaches the workflow's done status, the target task's assignment is re-evaluated using ITS OWN current status (no status is changed on the target).\n\n" +
+				"NOTE: automatic reassignment ('whenever a task's status becomes X, assign it to member Y') is NOT part of the workflow itself — it's a separate, project-wide concern handled by list_status_assignment_rules/create_status_assignment_rule/etc., which apply to every task in the project (not just tasks wired into a workflow) and support filtering by task fields. A workflow's edges still trigger re-evaluation of that project-wide rule set for downstream tasks once a predecessor is done.\n\n" +
 				"Call this before editing a workflow you didn't just create, so you know its current graph — create_workflow/update_workflow address nodes/edges by taskId, not by internal IDs, but you'll still want to see what's already there.",
 			inputSchema: {
 				type: "object",
@@ -221,11 +192,11 @@ export function getWorkflowTools(): Tool[] {
 			name: "create_workflow",
 			description:
 				"IMPORTANT: every entry in nodes must include posX AND posY (both required numbers) in the SAME call — decide where each node goes before calling this tool. There is no way to add a node without a position and no way to add one later without a second call; omitting them just wastes a round trip on a validation error. Lay them out top-to-bottom by dependency order (posY = stage/row, matching the edges you declare — earlier/no-predecessor tasks on top, later/dependent tasks below) and side-by-side for parallel tasks at the same stage (same posY, different posX). See the posX/posY field descriptions below for exact spacing and how to avoid a node sitting on top of another edge.\n\n" +
-				"Create a new automation workflow, optionally building out its whole graph in one call: nodes (tasks to wrap), status rules, status transitions, and edges. Starts in 'draft' state — the automation engine ignores it until activated (pass activate: true once the graph is complete, or activate later via update_workflow).\n\n" +
+				"Create a new automation workflow, optionally building out its whole graph in one call: nodes (tasks to wrap), status transitions, and edges. Starts in 'draft' state — the automation engine ignores it until activated (pass activate: true once the graph is complete, or activate later via update_workflow).\n\n" +
 				"A default status-transition chain is auto-generated from the project's task statuses ordered by board position, chaining them sequentially — the last (highest-position) status becomes the workflow's done status. Pass statusTransitions to override entries in this chain.\n\n" +
-				"A default status rule is ALSO auto-generated for every status — assigned to you if you're human, otherwise the project's first human member, since an agent can't hand its own work off to itself. This is so the workflow hands work off somewhere immediately instead of doing nothing until manually configured. These seeded rules are valid starting points, not invalid placeholders to delete — pass statusRules only for the statuses whose assignee you want to change; each entry upserts by statusId, reassigning the existing default in place.\n\n" +
-				"Reference tasks/statuses/members by the IDs you already have from list_tasks/list_task_statuses/list_project_members — you never need an internal node/rule/transition/edge ID to build a workflow. edges reference the SAME task IDs used in nodes (both endpoints must also appear in nodes); this tool resolves them to the workflow's internal node IDs for you.\n\n" +
-				"Each entry in nodes/statusRules/statusTransitions/edges is applied independently — one bad entry (e.g. an edge that would create a cycle) doesn't block the others; check the response for any 'failed' items. activate is only attempted if every requested item above succeeded.",
+				"NOTE: this tool does NOT configure assignment rules — those are project-wide, not per-workflow. To have tasks auto-assigned when they reach a status (including tasks re-evaluated via this workflow's edges once a predecessor is done), use create_status_assignment_rule separately.\n\n" +
+				"Reference tasks/statuses/members by the IDs you already have from list_tasks/list_task_statuses/list_project_members — you never need an internal node/transition/edge ID to build a workflow. edges reference the SAME task IDs used in nodes (both endpoints must also appear in nodes); this tool resolves them to the workflow's internal node IDs for you.\n\n" +
+				"Each entry in nodes/statusTransitions/edges is applied independently — one bad entry (e.g. an edge that would create a cycle) doesn't block the others; check the response for any 'failed' items. activate is only attempted if every requested item above succeeded.",
 			inputSchema: {
 				type: "object",
 				properties: {
@@ -240,12 +211,6 @@ export function getWorkflowTools(): Tool[] {
 						description:
 							"Tasks to add as nodes in this workflow. Every entry requires taskId, posX, AND posY together — there is no valid entry with only taskId.",
 						items: NODE_ITEM_JSON_SCHEMA,
-					},
-					statusRules: {
-						type: "array",
-						description:
-							"Status->assignee rules: whenever a task in this workflow changes to statusId, auto-assign it to assigneeMemberId.",
-						items: STATUS_RULE_ITEM_JSON_SCHEMA,
 					},
 					statusTransitions: {
 						type: "array",
@@ -272,10 +237,10 @@ export function getWorkflowTools(): Tool[] {
 			name: "update_workflow",
 			description:
 				"IMPORTANT: every nodes.set entry must include posX AND posY (both required numbers), even when you are ONLY repositioning a node that already exists — decide on positions before calling this tool. There is no valid entry with just taskId, and omitting them just wastes a round trip on a validation error. Lay nodes out top-to-bottom by dependency order (posY = stage/row, matching the edges — earlier/no-predecessor tasks on top, later/dependent tasks below) and side-by-side for parallel tasks at the same stage (same posY, different posX); call get_workflow first to see every existing node's current position (and any edges) before repositioning, so the result stays consistent with the rest of the graph. See the posX/posY field descriptions below for exact spacing.\n\n" +
-				"Update a workflow: rename/describe it, change its lifecycle status, and/or edit its graph (nodes, status rules, status transitions, edges) — all in one call. Like create_workflow, everything is addressed by taskId/statusId (no internal node/rule/transition/edge IDs needed); use get_workflow first if you need to see the workflow's current graph.\n\n" +
-				"Graph edits (nodes/statusRules/statusTransitions/edges) work whether the workflow is 'draft' or 'active' — including a nodes.set entry that ONLY repositions an existing node. Only 'archived' locks the graph (delete or build a new one instead). Do not call this tool once per node; pass every node you're touching as one nodes.set array in a single call.\n\n" +
+				"Update a workflow: rename/describe it, change its lifecycle status, and/or edit its graph (nodes, status transitions, edges) — all in one call. Like create_workflow, everything is addressed by taskId/statusId (no internal node/transition/edge IDs needed); use get_workflow first if you need to see the workflow's current graph. NOTE: assignment rules are configured separately via update_status_assignment_rule/etc. — they are project-wide, not part of this graph.\n\n" +
+				"Graph edits (nodes/statusTransitions/edges) work whether the workflow is 'draft' or 'active' — including a nodes.set entry that ONLY repositions an existing node. Only 'archived' locks the graph (delete or build a new one instead). Do not call this tool once per node; pass every node you're touching as one nodes.set array in a single call.\n\n" +
 				"Pass status when you want a different lifecycle state than the workflow currently has: 'draft' to pause the automation engine while keeping the workflow editable (e.g. reviewing changes before reactivating yourself); 'active' to activate a currently-draft workflow (requires at least one node and exactly one status with no next status configured); 'archived' to archive a currently-active one (archived workflows can never be reverted — delete or build a new one instead). When status is given, it's applied around the edits the same way (draft first, active/archived last).\n\n" +
-				"nodes/statusRules/statusTransitions/edges each take set/remove (edges use add instead of set, since an edge has nothing to update — only exists or not): 'set' creates the entry if it doesn't exist yet, or updates it in place if it does (e.g. re-positioning an existing node, or changing a rule's assignee). 'remove' deletes it — removing a taskId/statusId/edge pair that doesn't currently exist is a no-op, not an error, so it's safe to retry. Every item in every list is attempted independently; one item failing (e.g. one bad edge) doesn't block its siblings.",
+				"nodes/statusTransitions/edges each take set/remove (edges use add instead of set, since an edge has nothing to update — only exists or not): 'set' creates the entry if it doesn't exist yet, or updates it in place if it does (e.g. re-positioning an existing node). 'remove' deletes it — removing a taskId/statusId/edge pair that doesn't currently exist is a no-op, not an error, so it's safe to retry. Every item in every list is attempted independently; one item failing (e.g. one bad edge) doesn't block its siblings.",
 			inputSchema: {
 				type: "object",
 				properties: {
@@ -305,23 +270,6 @@ export function getWorkflowTools(): Tool[] {
 								description:
 									"Task IDs whose node should be removed from this workflow (also removes that node's edges).",
 								items: { type: "string", description: TASK_ID_DESC },
-							},
-						},
-					},
-					statusRules: {
-						type: "object",
-						description:
-							"Set or remove status->assignee rules. Note: create_workflow already seeded one valid default rule per status — to change who a status is assigned to, use set with that statusId (it upserts in place); you do not need to remove the existing rule first.",
-						properties: {
-							set: {
-								type: "array",
-								description: "Rules to create or update.",
-								items: STATUS_RULE_ITEM_JSON_SCHEMA,
-							},
-							remove: {
-								type: "array",
-								description: "Status IDs whose rule should be removed.",
-								items: { type: "string", description: STATUS_ID_DESC },
 							},
 						},
 					},
@@ -406,11 +354,11 @@ function formatWorkflowGraph(graph: WorkflowGraph): string {
 	const wf = graph.workflow;
 	const nodes = graph.nodes || [];
 	const edges = graph.edges || [];
-	const rules = graph.status_rules || [];
 	const transitions = graph.status_transitions || [];
 	const lines = [
 		`Workflow '${wf.name}' (status: ${wf.status}, id: ${wf.id})`,
-		`${nodes.length} node(s), ${edges.length} edge(s), ${rules.length} status rule(s), ${transitions.length} status transition(s):`,
+		`${nodes.length} node(s), ${edges.length} edge(s), ${transitions.length} status transition(s). ` +
+			"Assignment rules are project-wide now, not part of this graph — use list_status_assignment_rules to see them.",
 		"",
 	];
 	for (const n of nodes) {
@@ -420,17 +368,6 @@ function formatWorkflowGraph(graph: WorkflowGraph): string {
 	}
 	for (const e of edges) {
 		lines.push(`- edge ${e.id}: ${e.source_node_id} -> ${e.target_node_id}`);
-	}
-	if (rules.length > 0) {
-		lines.push(
-			"",
-			"Status rules (apply to any task in this workflow; every status gets one by default when the workflow is created — these are valid rules, not errors, even if you didn't set them yourself; use update_workflow's statusRules.set to reassign one in place instead of removing it):",
-		);
-		for (const r of rules) {
-			lines.push(
-				`- status=${r.status_id}->assignee=${r.assignee_member_id} (rule id: ${r.id})`,
-			);
-		}
 	}
 	if (transitions.length > 0) {
 		lines.push(
@@ -516,7 +453,6 @@ async function handleWorkflowToolInner(
 				name,
 				description,
 				nodes,
-				statusRules,
 				statusTransitions,
 				edges,
 				activate,
@@ -534,12 +470,6 @@ async function handleWorkflowToolInner(
 			const indexes = emptyGraphIndexes();
 
 			const nodesResult = await applyNodes(ctx, nodes, undefined, indexes);
-			const rulesResult = await applyStatusRules(
-				ctx,
-				statusRules,
-				undefined,
-				indexes,
-			);
 			const transitionsResult = await applyStatusTransitions(
 				ctx,
 				statusTransitions,
@@ -550,7 +480,6 @@ async function handleWorkflowToolInner(
 
 			const hadFailure = anyHasFailure(
 				nodesResult.set,
-				rulesResult.set,
 				transitionsResult.set,
 				edgesResult.added,
 			);
@@ -560,7 +489,6 @@ async function handleWorkflowToolInner(
 			];
 			for (const block of [
 				formatCategoryResult("Nodes", nodesResult.set),
-				formatCategoryResult("Status rules", rulesResult.set),
 				formatCategoryResult("Status transitions", transitionsResult.set),
 				formatCategoryResult("Edges", edgesResult.added),
 			]) {
@@ -588,9 +516,9 @@ async function handleWorkflowToolInner(
 						lines.push(`Activation failed: ${extractApiErrorMessage(err)}`);
 					}
 				}
-			} else if (!nodes && !statusRules && !statusTransitions && !edges) {
+			} else if (!nodes && !statusTransitions && !edges) {
 				lines.push(
-					"Add tasks as nodes, then link them with edges, via update_workflow.",
+					"Add tasks as nodes, then link them with edges, via update_workflow. To auto-assign tasks by status, use create_status_assignment_rule separately.",
 				);
 			} else {
 				lines.push(
@@ -609,7 +537,6 @@ async function handleWorkflowToolInner(
 				description,
 				status,
 				nodes,
-				statusRules,
 				statusTransitions,
 				edges,
 			} = UpdateWorkflowSchema.parse(args);
@@ -648,9 +575,7 @@ async function handleWorkflowToolInner(
 				}
 			}
 
-			const touchesGraph = Boolean(
-				nodes || statusRules || statusTransitions || edges,
-			);
+			const touchesGraph = Boolean(nodes || statusTransitions || edges);
 			if (touchesGraph && blockedByRevert) {
 				hadFailure = true;
 				lines.push(
@@ -688,12 +613,6 @@ async function handleWorkflowToolInner(
 						nodes?.remove,
 						indexes,
 					);
-					const rulesResult = await applyStatusRules(
-						ctx,
-						statusRules?.set,
-						statusRules?.remove,
-						indexes,
-					);
 					const transitionsResult = await applyStatusTransitions(
 						ctx,
 						statusTransitions?.set,
@@ -710,8 +629,6 @@ async function handleWorkflowToolInner(
 					for (const block of [
 						formatCategoryResult("Nodes removed", nodesResult.removed),
 						formatCategoryResult("Nodes set", nodesResult.set),
-						formatCategoryResult("Status rules removed", rulesResult.removed),
-						formatCategoryResult("Status rules set", rulesResult.set),
 						formatCategoryResult(
 							"Status transitions removed",
 							transitionsResult.removed,
@@ -761,8 +678,6 @@ async function handleWorkflowToolInner(
 						anyHasFailure(
 							nodesResult.removed,
 							nodesResult.set,
-							rulesResult.removed,
-							rulesResult.set,
 							transitionsResult.removed,
 							transitionsResult.set,
 							edgesResult.removed,

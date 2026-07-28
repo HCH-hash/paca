@@ -7,6 +7,7 @@ import {
 	PacaAPIClient,
 	PacaAPIDocClient,
 	PacaAPIExtendedClient,
+	PacaAPIStatusRuleClient,
 	PacaAPITaskExtendedClient,
 	PacaAPIViewsClient,
 	PacaAPIWorkflowClient,
@@ -36,6 +37,7 @@ export async function createServer(config: PacaConfig): Promise<Server> {
 	const taskExtendedClient = new PacaAPITaskExtendedClient(config);
 	const docClient = new PacaAPIDocClient(config);
 	const workflowClient = new PacaAPIWorkflowClient(config);
+	const statusRuleClient = new PacaAPIStatusRuleClient(config);
 
 	const clients = {
 		apiClient,
@@ -44,6 +46,7 @@ export async function createServer(config: PacaConfig): Promise<Server> {
 		taskExtendedClient,
 		docClient,
 		workflowClient,
+		statusRuleClient,
 	};
 
 	// Load plugin MCP modules from the Paca API.
