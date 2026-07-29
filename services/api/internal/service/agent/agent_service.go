@@ -681,8 +681,23 @@ func (s *Service) SendConversationMessage(ctx context.Context, projectID, conver
 	if err != nil {
 		return err
 	}
-	if agentdom.ConversationStatus(c.Status) != agentdom.ConversationStatusRunning {
-		return agentdom.ErrConversationNotRunning
+	switch agentdom.ConversationStatus(c.Status) {
+	case agentdom.ConversationStatusRunning:
+		// Mid-turn: the message joins the turn already in flight (unchanged).
+	case agentdom.ConversationStatusQueued:
+		return agentdom.ErrConversationBusy
+	default:
+		// Paused or terminal (finished/failed/stopped): RESUME for another turn.
+		// Claim the status atomically (→ running) so two concurrent replies can't
+		// both re-dispatch the same conversation_id; the loser retries as busy.
+		claimed, err := s.repo.ClaimConversationStatus(ctx, conversationID,
+			c.Status, string(agentdom.ConversationStatusRunning))
+		if err != nil {
+			return err
+		}
+		if !claimed {
+			return agentdom.ErrConversationBusy
+		}
 	}
 	return s.publishTrigger(ctx, events.TopicAgentChatMessage, map[string]any{
 		"conversation_id": conversationID.String(),
