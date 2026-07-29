@@ -40,7 +40,10 @@ CREATE TABLE IF NOT EXISTS users (
         ON DELETE RESTRICT
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS uni_users_username ON users (username);
+-- Scoped to ACTIVE users so this re-run-on-every-boot migration is safe once a
+-- username has a soft-deleted duplicate (legal from 000016); a full index here
+-- crash-loops the API with 23505 after a user is deleted and the name reused.
+CREATE UNIQUE INDEX IF NOT EXISTS uni_users_username ON users (username) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_users_deleted_at ON users (deleted_at) WHERE deleted_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_users_role_id    ON users (role_id);
 
