@@ -95,6 +95,7 @@ class ConversationRunner:
         conversation_id = data["conversation_id"]
         project_id = data["project_id"]
         message = data.get("message", "")
+        history = data.get("history", "")
 
         existing = self._conversations.get(conversation_id)
         if existing is not None:
@@ -137,8 +138,24 @@ class ConversationRunner:
             workspace=self.workspace,
             callbacks=[self._make_event_callback(conversation_id, project_id)],
         )
+        # COLD start: there is no warm session for this conversation (first turn, or the
+        # daemon restarted and lost the in-memory session). If the server sent the prior
+        # transcript, replay it as restored context so the agent remembers the whole
+        # conversation instead of starting blank. Warm resumes (above) skip this — the
+        # live Conversation already holds the context.
+        first_message = message
+        if history:
+            first_message = (
+                "## Restored conversation context\n"
+                "This chat session was restarted, so here is what was already said. "
+                "Use it as your memory of the conversation; do not greet the user as if "
+                "this were a new chat.\n\n"
+                f"{history}\n\n"
+                "---\n\n"
+                f"{message}"
+            )
         task = asyncio.create_task(
-            self._run_conversation(conversation, conversation_id, project_id, message)
+            self._run_conversation(conversation, conversation_id, project_id, first_message)
         )
         self._conversations[conversation_id] = _ConversationHandle(
             conversation=conversation, task=task

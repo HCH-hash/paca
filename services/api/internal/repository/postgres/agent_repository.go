@@ -764,9 +764,23 @@ func (r *AgentRepository) ListConversationEvents(ctx context.Context, conversati
 }
 
 // CreateConversationEvent inserts a new conversation event record.
+//
+// A negative EventIndex is a sentinel meaning "assign the next index for this
+// conversation": the index is computed in-statement as MAX(event_index)+1, which
+// keeps the numbering correct (it spans the whole conversation lifetime, not one
+// turn) without the caller having to read it first. Used when the API persists the
+// user's message on send so it survives a reload and feeds the resume transcript.
 func (r *AgentRepository) CreateConversationEvent(ctx context.Context, e *agentdom.AgentConversationEvent) error {
 	rec, err := conversationEventToRecord(e)
 	if err != nil {
+		return err
+	}
+	if rec.EventIndex < 0 {
+		_, err = r.db.ExecContext(ctx, `
+			INSERT INTO agent_conversation_events (id, conversation_id, event_index, event_type, event_source, payload, created_at)
+			VALUES ($1,$2,(SELECT COALESCE(MAX(event_index),-1)+1 FROM agent_conversation_events WHERE conversation_id=$2),$3,$4,$5,$6)`,
+			rec.ID, rec.ConversationID, rec.EventType, rec.EventSource, rec.Payload, rec.CreatedAt,
+		)
 		return err
 	}
 	_, err = r.db.ExecContext(ctx, `

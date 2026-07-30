@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 import uvicorn
 from fastapi import FastAPI
 
-from .agent.executor import reap_idle_chat_sandboxes
+from .agent.executor import reap_idle_chat_sandboxes, reconcile_orphaned_conversations
 from .config import settings
 from .core.db import close_pool
 from .core.streams import close_client
@@ -24,20 +24,22 @@ logger = logging.getLogger(__name__)
 
 _worker_task: asyncio.Task | None = None
 _reaper_task: asyncio.Task | None = None
+_reconciler_task: asyncio.Task | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _worker_task, _reaper_task
+    global _worker_task, _reaper_task, _reconciler_task
     logger.info("AI-agent service starting up")
     _worker_task = asyncio.create_task(run_worker())
     _reaper_task = asyncio.create_task(reap_idle_chat_sandboxes())
+    _reconciler_task = asyncio.create_task(reconcile_orphaned_conversations())
     try:
         yield
     finally:
         logger.info("AI-agent service shutting down")
         stop_worker()
-        for task in (_worker_task, _reaper_task):
+        for task in (_worker_task, _reaper_task, _reconciler_task):
             if task:
                 task.cancel()
                 try:

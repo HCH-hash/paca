@@ -110,21 +110,31 @@ async def bridge_ws(websocket: WebSocket) -> None:
                 status_str = data.get("status")
                 if not conversation_id or status_str is None:
                     continue
+                # A turn's completion report is authoritative and must ALWAYS land —
+                # dropping it leaves the conversation stuck "running" forever. So an
+                # ownership mismatch (routing/agent changed mid-turn, or the row's agent
+                # was re-provisioned) is logged but NOT dropped: we still apply the status.
                 owner = await conversation_repository.get_conversation_agent_type(conversation_id)
                 if owner is None or owner[0] != agent_id:
                     logger.warning(
-                        "Dropping ACP turn_status for conversation %s not owned by agent %s",
+                        "turn_status for conversation %s from agent %s but current owner is %s"
+                        " — applying anyway so the conversation can't get stuck running",
                         conversation_id,
                         agent_id,
+                        owner[0] if owner else None,
                     )
-                    continue
                 try:
                     status = ConversationStatus(status_str)
                 except ValueError:
+                    # An unrecognised terminal report must still move the conversation off
+                    # "running" — treat it as a failure rather than silently dropping it.
                     logger.warning(
-                        "Dropping unknown turn_status %r from agent %s", status_str, agent_id
+                        "Unknown turn_status %r from agent %s — marking conversation %s failed",
+                        status_str,
+                        agent_id,
+                        conversation_id,
                     )
-                    continue
+                    status = ConversationStatus.FAILED
                 await conversation_repository.update_conversation_status(
                     conversation_id, status, error_message=data.get("error_message")
                 )

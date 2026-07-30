@@ -98,6 +98,22 @@ async def dispatch_acp_trigger(trigger: TriggerMessage, agent_config: AgentConfi
     await conversation_repository.update_conversation_status(
         trigger.conversation_id, ConversationStatus.RUNNING
     )
+    # Give the daemon the prior transcript so a COLD start (bridge restarted / this
+    # conversation not warm in memory) can replay full context instead of forgetting
+    # everything. The daemon ignores it when it still has a warm session. Only chat
+    # needs it (task runs carry their context in the task itself).
+    history = ""
+    if trigger.trigger_type == "chat_message":
+        try:
+            history = await conversation_repository.get_conversation_transcript(
+                trigger.conversation_id, omit_last_user=trigger.message
+            )
+        except Exception:
+            logger.warning(
+                "Could not load transcript for %s; cold resume may lack context",
+                trigger.conversation_id,
+                exc_info=True,
+            )
     dispatched = await acp_bridge.dispatch(
         agent_id,
         {
@@ -105,6 +121,7 @@ async def dispatch_acp_trigger(trigger: TriggerMessage, agent_config: AgentConfi
             "conversation_id": trigger.conversation_id,
             "project_id": trigger.project_id,
             "message": build_acp_message(trigger),
+            "history": history,
             "trigger_type": trigger.trigger_type,
             "acp_provider": agent_config.acp_provider,
             "acp_command": agent_config.acp_command,

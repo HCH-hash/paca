@@ -828,3 +828,36 @@ async def reap_idle_chat_sandboxes() -> None:
                 await teardown_paused_chat_sandbox(cid)
             except Exception:
                 logger.exception("Failed to reap idle chat sandbox for conversation %s", cid)
+
+
+# The self-healing backstop. In-memory watchdogs (acp_dispatch, this executor) are lost
+# on any restart, which is exactly when a turn gets orphaned in 'running'/'queued' with
+# nothing to move it forward. This DB-level sweep is the guarantee-of-last-resort that a
+# conversation can NEVER be permanently stuck.
+_RECONCILE_INTERVAL_SECONDS = 120
+# Startup: on boot no turn owned by THIS fresh process is in flight, so any non-terminal
+# row older than a few minutes belongs to a dead predecessor — fail it promptly.
+_RECONCILE_STARTUP_MINUTES = 5
+# Steady state: generous window so a genuinely long turn (task runs can approach the
+# per-turn timeout) is never killed; the fast recovery is acp_dispatch's watchdog.
+_RECONCILE_STALE_MINUTES = 90
+
+
+async def reconcile_orphaned_conversations() -> None:
+    """Background loop: fail conversations left non-terminal by a crash/restart so a
+    stuck 'running'/'queued' can never be permanent. Started alongside the worker in
+    main.py's lifespan. First pass (startup) uses a short window, then a generous one."""
+    first = True
+    while True:
+        try:
+            minutes = _RECONCILE_STARTUP_MINUTES if first else _RECONCILE_STALE_MINUTES
+            failed = await conversation_repository.fail_orphaned_conversations(minutes)
+            if failed:
+                logger.warning(
+                    "Reconciler recovered %d orphaned conversation(s) stuck non-terminal",
+                    failed,
+                )
+        except Exception:
+            logger.exception("Reconciler pass failed")
+        first = False
+        await asyncio.sleep(_RECONCILE_INTERVAL_SECONDS)

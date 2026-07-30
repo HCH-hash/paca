@@ -707,6 +707,27 @@ func (s *Service) Heartbeat(ctx context.Context, projectID, conversationID uuid.
 	})
 }
 
+// persistUserMessage records the user's message as a conversation event the instant
+// they send it — BEFORE the trigger is published — so it (a) survives a page reload
+// and (b) is part of the transcript the ai-agent replays on a cold resume. Without
+// this the user's text lived only in the ephemeral Redis trigger and vanished on
+// reload / was invisible to the resume replay. Best-effort: a persist hiccup must not
+// block the send (the turn still runs; only the stored copy is missing).
+// EventIndex -1 is the "assign next index" sentinel (see CreateConversationEvent).
+func (s *Service) persistUserMessage(ctx context.Context, conversationID, memberID uuid.UUID, message string) {
+	if strings.TrimSpace(message) == "" {
+		return
+	}
+	_ = s.repo.CreateConversationEvent(ctx, &agentdom.AgentConversationEvent{
+		ID:             uuid.New(),
+		ConversationID: conversationID,
+		EventIndex:     -1,
+		EventType:      "MessageEvent",
+		EventSource:    "user",
+		Payload:        map[string]any{"content": message, "member_id": memberID.String()},
+	})
+}
+
 // SendConversationMessage publishes a chat message to an active conversation.
 func (s *Service) SendConversationMessage(ctx context.Context, projectID, conversationID uuid.UUID, message string, memberID uuid.UUID) error {
 	c, err := s.GetConversation(ctx, projectID, conversationID)
@@ -731,6 +752,10 @@ func (s *Service) SendConversationMessage(ctx context.Context, projectID, conver
 			return agentdom.ErrConversationBusy
 		}
 	}
+	// Persist the user's message BEFORE dispatch so it survives reload + feeds the
+	// cold-resume transcript replay (see persistUserMessage).
+	s.persistUserMessage(ctx, conversationID, memberID, message)
+
 	// The dispatcher (services/ai-agent) drops any trigger missing trigger_type or
 	// agent_id, and it drops a completion turn_status whose agent doesn't own the
 	// conversation. The original bare payload had neither, so a resumed turn was never
@@ -786,6 +811,7 @@ func (s *Service) StartChatSession(ctx context.Context, projectID, agentID, memb
 		return nil, nil, err
 	}
 
+	s.persistUserMessage(ctx, conv.ID, memberID, message)
 	if err := s.publishChatTrigger(ctx, agentID, conv.ID, session.ID, projectID, memberID, message, s.gatherRepoPluginIDs(ctx)); err != nil {
 		return nil, nil, err
 	}
@@ -854,6 +880,7 @@ func (s *Service) SendChatMessage(ctx context.Context, projectID, sessionID, mem
 	// else: resume — reuse the same conversation_id so ai-agent reattaches
 	// to the sandbox it kept alive rather than cold-starting a new one.
 
+	s.persistUserMessage(ctx, conv.ID, memberID, message)
 	if err := s.publishChatTrigger(ctx, session.AgentID, conv.ID, sessionID, projectID, memberID, message, s.gatherRepoPluginIDs(ctx)); err != nil {
 		return nil, err
 	}

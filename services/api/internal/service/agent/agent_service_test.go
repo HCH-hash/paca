@@ -1002,28 +1002,39 @@ func TestSendConversationMessage_Success(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestSendConversationMessage_NotRunning(t *testing.T) {
-	projectID := uuid.New()
-	conversationID := uuid.New()
-	conversation := &agentdom.AgentConversation{
-		ID:        conversationID,
-		ProjectID: projectID,
-		Status:    "finished",
+// A conversation whose previous turn has ENDED (finished/failed/stopped/paused) is
+// RESUMED for another turn (PR #341): the status is atomically claimed back to running
+// and a fresh chat trigger is published — no more dead-ending with "not running".
+func TestSendConversationMessage_ResumesEndedConversation(t *testing.T) {
+	for _, status := range []string{"finished", "failed", "stopped", "paused"} {
+		t.Run(status, func(t *testing.T) {
+			projectID := uuid.New()
+			conversationID := uuid.New()
+			conversation := &agentdom.AgentConversation{
+				ID:        conversationID,
+				ProjectID: projectID,
+				AgentID:   uuid.New(),
+				Status:    status,
+			}
+			var claimedFrom, claimedTo string
+			repo := &mockAgentRepo{
+				findConversationByID: func(_ context.Context, _ uuid.UUID) (*agentdom.AgentConversation, error) {
+					return conversation, nil
+				},
+				claimConversationStatus: func(_ context.Context, _ uuid.UUID, from, to string) (bool, error) {
+					claimedFrom, claimedTo = from, to
+					return true, nil
+				},
+			}
+			svc := New(repo, &mockProjectRepo{}, nil, &mockPluginRepo{})
+
+			err := svc.SendConversationMessage(context.Background(), projectID, conversationID, "another turn", uuid.New())
+
+			assert.NoError(t, err)
+			assert.Equal(t, status, claimedFrom)  // claimed FROM the ended status…
+			assert.Equal(t, "running", claimedTo) // …TO running, ready to re-dispatch
+		})
 	}
-
-	repo := &mockAgentRepo{
-		findConversationByID: func(_ context.Context, _ uuid.UUID) (*agentdom.AgentConversation, error) {
-			return conversation, nil
-		},
-	}
-	projRepo := &mockProjectRepo{}
-	pluginRepo := &mockPluginRepo{}
-	svc := New(repo, projRepo, nil, pluginRepo)
-
-	err := svc.SendConversationMessage(context.Background(), projectID, conversationID, "test message", uuid.New())
-
-	assert.Error(t, err)
-	assert.ErrorIs(t, err, agentdom.ErrConversationNotRunning)
 }
 
 func TestStopConversation_Success(t *testing.T) {
