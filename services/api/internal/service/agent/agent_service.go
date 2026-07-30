@@ -731,11 +731,24 @@ func (s *Service) SendConversationMessage(ctx context.Context, projectID, conver
 			return agentdom.ErrConversationBusy
 		}
 	}
+	// The dispatcher (services/ai-agent) drops any trigger missing trigger_type or
+	// agent_id, and it drops a completion turn_status whose agent doesn't own the
+	// conversation. The original bare payload had neither, so a resumed turn was never
+	// dispatched (stuck RUNNING) and — when it did run — its "paused" report was dropped.
+	// Publish the SAME well-formed chat trigger StartChatSession uses, keyed to the
+	// conversation's own agent + session, so both halves line up.
+	sessionID := ""
+	if c.ChatSessionID != nil {
+		sessionID = c.ChatSessionID.String()
+	}
 	return s.publishTrigger(ctx, events.TopicAgentChatMessage, map[string]any{
 		"conversation_id": conversationID.String(),
 		"project_id":      projectID.String(),
+		"agent_id":        c.AgentID.String(),
+		"chat_session_id": sessionID,
+		"actor_member_id": memberID.String(),
+		"trigger_type":    "chat_message",
 		"message":         message,
-		"member_id":       memberID.String(),
 	})
 }
 
