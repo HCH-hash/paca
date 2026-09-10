@@ -371,6 +371,14 @@ export const TOOL_PERMISSIONS: ToolPermission[] = [
 		requiresProject: true,
 	},
 
+	// Document file tools (backend: GET .../docs/:docId/files/:fileId/download-url,
+	// the only route read_doc_file calls, is gated by docs.read)
+	{
+		toolName: "read_doc_file",
+		permissionKey: "docs.read",
+		requiresProject: true,
+	},
+
 	// Automation tools (still gated by the workflows.* permission keys — see
 	// the backend's automation router registration for why those key names
 	// were kept rather than renamed to automations.*)

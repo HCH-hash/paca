@@ -27,12 +27,13 @@ This document lists all MCP tools implemented for the Paca API server.
 - `delete_sprint` - Delete a sprint
 - `complete_sprint` - Mark a sprint as completed
 
-### 4. Documents (5 tools)
+### 4. Documents (6 tools)
 - `list_documents` - List all documents in a project
 - `get_document` - Get details of a specific document
 - `create_document` - Create a new document
 - `update_document` - Update an existing document
 - `delete_document` - Delete a document
+- `read_doc_file` - Download and read a file attached to a document inline: images (PNG, JPEG, GIF, WebP, up to 5 MB) as a viewable image, text files (up to 2 MB) as text
 
 ### 5. Project Members (5 tools)
 - `list_project_members` - List all members of a project
@@ -118,7 +119,7 @@ This document lists all MCP tools implemented for the Paca API server.
 
 ## Statistics
 
-- **Total Tools**: 81 MCP tools
+- **Total Tools**: 82 MCP tools
 - **Categories**: 16 different categories
 - **API Endpoints Covered**: 80+ endpoints
 
@@ -153,6 +154,7 @@ This document lists all MCP tools implemented for the Paca API server.
 - GET /api/v1/projects/:projectId/docs/:docId
 - PATCH /api/v1/projects/:projectId/docs/:docId
 - DELETE /api/v1/projects/:projectId/docs/:docId
+- GET /api/v1/projects/:projectId/docs/:docId/files/:fileId/download-url (then GET on the presigned URL it returns)
 
 ### Project Members
 - GET /api/v1/projects/:projectId/members

@@ -2,8 +2,8 @@ import { readFile } from "node:fs/promises";
 import { basename, extname } from "node:path";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import type { PacaAPIViewsClient } from "../api/index.js";
-import { formatFileSize, formatList } from "../utils/index.js";
+import type { PacaAPIDocClient, PacaAPIViewsClient } from "../api/index.js";
+import { formatFileSize, formatList, formatToolError } from "../utils/index.js";
 
 const ListTaskAttachmentsSchema = z.object({
 	projectId: z.string(),
@@ -73,6 +73,12 @@ const DeleteTaskAttachmentSchema = z.object({
 	projectId: z.string(),
 	taskId: z.string(),
 	attachmentId: z.string(),
+});
+
+const ReadDocFileSchema = z.object({
+	projectId: z.string(),
+	docId: z.string(),
+	fileId: z.string(),
 });
 
 // Content types that are safe to decode and hand back as plain text.
@@ -180,11 +186,16 @@ const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // 5 MB
 
 type AttachmentKind = "text" | "image" | "binary";
 
+/** Lower-cases a content type and drops its parameters (e.g. "; charset=utf-8"). */
+function normalizeContentType(contentType: string | undefined): string {
+	return (contentType || "").toLowerCase().split(";")[0].trim();
+}
+
 function classifyAttachment(
 	fileName: string,
 	contentType: string | undefined,
 ): AttachmentKind {
-	const normalizedType = (contentType || "").toLowerCase().split(";")[0].trim();
+	const normalizedType = normalizeContentType(contentType);
 	if (IMAGE_MIME_TYPES.has(normalizedType)) return "image";
 	if (normalizedType.startsWith("text/")) return "text";
 	if (TEXT_MIME_TYPES.has(normalizedType)) return "text";
@@ -198,7 +209,10 @@ function classifyAttachment(
 }
 
 /**
- * Returns all attachment-related MCP tools.
+ * Returns all attachment-related MCP tools: task attachments, plus
+ * read_doc_file for files attached to a document (the backend serves both
+ * from its attachment domain, and read_doc_file shares read_task_attachment's
+ * classification and size limits).
  */
 export function getAttachmentTools(): Tool[] {
 	return [
@@ -340,6 +354,38 @@ export function getAttachmentTools(): Tool[] {
 					},
 				},
 				required: ["projectId", "taskId", "attachmentId"],
+			},
+		},
+		{
+			name: "read_doc_file",
+			description:
+				"Download and read a file attached to a document, such as an image " +
+				"pasted into it. Images (PNG, JPEG, GIF, WebP) are returned as a " +
+				"viewable image; text-based files (code, markdown, JSON, YAML, CSV, " +
+				"logs, etc.) are returned as plain text. Files over 2 MB (text) or " +
+				"5 MB (images), and other binary formats (PDF, zip, docx, etc.), " +
+				"can't be read this way. A document's content refers to its files " +
+				"as docfile://{projectId}/{docId}/{fileId}.",
+			inputSchema: {
+				type: "object",
+				properties: {
+					projectId: {
+						type: "string",
+						description:
+							"The technical UUID of the project (e.g., '550e8400-e29b-41d4-a716-446655440000'). Use list_projects to get the project ID. Do NOT use the project name.",
+					},
+					docId: {
+						type: "string",
+						description:
+							"The technical UUID of the document the file is attached to (e.g., '550e8400-e29b-41d4-a716-446655440000'). read_doc shows a document's ID.",
+					},
+					fileId: {
+						type: "string",
+						description:
+							"The technical UUID of the file (e.g., '550e8400-e29b-41d4-a716-446655440000') — the last segment of a docfile://{projectId}/{docId}/{fileId} reference in the document's content.",
+					},
+				},
+				required: ["projectId", "docId", "fileId"],
 			},
 		},
 	];
@@ -541,5 +587,120 @@ export async function handleAttachmentTool(
 
 		default:
 			throw new Error(`Unknown attachment tool: ${toolName}`);
+	}
+}
+
+/**
+ * Handles doc file tool calls. Separate from handleAttachmentTool only
+ * because doc files are served by the doc client rather than the views
+ * client.
+ *
+ * Wrapped in its own try/catch, like handleDocActivityTool: tools/index.ts
+ * returns this promise without awaiting it, so its outer try/catch never sees
+ * an async rejection — every error path here must resolve to an isError
+ * result instead.
+ */
+export async function handleDocFileTool(
+	toolName: string,
+	args: any,
+	docClient: PacaAPIDocClient,
+): Promise<any> {
+	try {
+		switch (toolName) {
+			case "read_doc_file": {
+				const { projectId, docId, fileId } = ReadDocFileSchema.parse(args);
+
+				// Doc files have no metadata endpoint, so the download's own
+				// headers are the only source of the file's type, size and name.
+				// openDocFile hands them over before any of the body is read.
+				const download = await docClient.openDocFile(
+					projectId,
+					docId,
+					fileId,
+				);
+				const fileName = download.fileName || fileId;
+				const kind = classifyAttachment(fileName, download.contentType);
+
+				if (kind === "binary") {
+					await download.discard();
+					const size =
+						download.contentLength === undefined
+							? ""
+							: `, ${formatFileSize(download.contentLength)}`;
+					return {
+						content: [
+							{
+								type: "text",
+								text: `"${fileName}" (${download.contentType || "unknown type"}${size}) can't be read as text or an image. Only images (PNG, JPEG, GIF, WebP) and text files can be read inline.`,
+							},
+						],
+						isError: true,
+					};
+				}
+
+				const maxBytes = kind === "image" ? MAX_IMAGE_BYTES : MAX_TEXT_BYTES;
+				const limit = `the ${formatFileSize(maxBytes)} limit for reading ${kind === "image" ? "images" : "text files"} inline`;
+
+				if (
+					download.contentLength !== undefined &&
+					download.contentLength > maxBytes
+				) {
+					await download.discard();
+					return {
+						content: [
+							{
+								type: "text",
+								text: `"${fileName}" is ${formatFileSize(download.contentLength)}, which exceeds ${limit}.`,
+							},
+						],
+						isError: true,
+					};
+				}
+
+				// Still bounded when Content-Length is missing or understated.
+				const buffer = await download.read(maxBytes);
+				if (buffer === null) {
+					return {
+						content: [
+							{
+								type: "text",
+								text: `"${fileName}" exceeds ${limit}.`,
+							},
+						],
+						isError: true,
+					};
+				}
+
+				if (kind === "image") {
+					return {
+						content: [
+							{
+								type: "image",
+								data: Buffer.from(buffer).toString("base64"),
+								mimeType: normalizeContentType(download.contentType),
+							},
+						],
+					};
+				}
+
+				const text = Buffer.from(buffer).toString("utf-8");
+				return {
+					content: [
+						{
+							type: "text",
+							text: `File: ${fileName} (${formatFileSize(buffer.byteLength)})\n\n${text}`,
+						},
+					],
+				};
+			}
+
+			default:
+				throw new Error(`Unknown doc file tool: ${toolName}`);
+		}
+	} catch (error) {
+		return {
+			content: [{ type: "text", text: `Error: ${formatToolError(error)}` }],
+			isError: true,
+		};
 	}
 }

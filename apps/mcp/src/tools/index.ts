@@ -17,6 +17,7 @@ import {
 import {
 	getAttachmentTools,
 	handleAttachmentTool,
+	handleDocFileTool,
 } from "./attachment-tools.js";
 import {
 	getAutomationTools,
@@ -223,6 +224,11 @@ export async function handleToolCall(
 			name === "delete_task_attachment"
 		) {
 			return handleAttachmentTool(name, args, clients.viewsClient);
+		}
+
+		// Document file tools
+		if (name === "read_doc_file") {
+			return handleDocFileTool(name, args, clients.docClient);
 		}
 
 		// Task activity tools
