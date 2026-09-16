@@ -1,0 +1,82 @@
+name: acp-bridge-tests
+
+# acp-bridge-pr-ci.yml only runs on pull_request, so a branch the box installs
+# FROM (uvx git+...@<sha>) could be pushed and deployed without its tests ever
+# having run. This one runs them on push, on the branches that are actually
+# deployed from.
+
+on:
+  push:
+    branches:
+      - "box/**"
+      - "fix/**"
+      - "fh/**"
+    paths:
+      - "apps/acp-bridge/**"
+      - ".github/workflows/acp-bridge-tests.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: acp-bridge-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Lint + unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    defaults:
+      run:
+        working-directory: apps/acp-bridge
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: "apps/acp-bridge/pyproject.toml"
+
+      - name: Remember the committed lockfile
+        run: cp uv.lock uv.lock.committed
+
+      # Not --locked: this resolves pyproject as it stands, so a pin change is
+      # testable in the same run that reports the lockfile as out of date.
+      - name: Install the project and its dev dependencies
+        run: uv sync
+
+      - name: Upload the resolved lockfile
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: uv-lock
+          path: apps/acp-bridge/uv.lock
+          if-no-files-found: error
+
+      - name: Ruff (lint)
+        run: uv run ruff check src/
+
+      - name: Ruff (format check)
+        run: uv run ruff format --check src/
+
+      - name: Pytest
+        run: uv run pytest --tb=short
+
+      # Last, so a stale lockfile still lets the tests report first. The box
+      # installs with uvx, which resolves from pyproject — but acp-bridge-pr-ci
+      # installs with `uv sync --locked`, so the two must agree.
+      - name: The committed lockfile must match pyproject
+        run: |
+          if ! cmp -s uv.lock uv.lock.committed; then
+            echo "::error::uv.lock is stale — download this run's uv-lock artifact and commit it"
+            exit 1
+          fi

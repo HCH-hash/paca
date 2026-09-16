@@ -4,9 +4,15 @@ version = "0.1.0"
 description = "Local daemon connecting an ACP-type Paca agent to a coding CLI (Claude Code, Codex, Gemini CLI, or a custom ACP server) running on your own machine."
 readme = "README.md"
 requires-python = ">=3.12"
+# openhands-sdk is PINNED, not floated. uvx resolves this at install time on the
+# box, so a floating range silently changes what every bridge runs whenever a new
+# SDK is published — and this daemon depends on details the SDK does not treat as
+# public API: ACPAgent's acp_resume_session_id field, the acp_session_id key in
+# state.agent_state, and the _process handle its close() leaves behind. 1.47.0 is
+# what the box's uv cache resolved to and what these tests were written against.
 dependencies = [
-    "openhands-sdk>=1.34.0",
-    "openhands-tools>=1.34.0",
+    "openhands-sdk==1.47.0",
+    "openhands-tools==1.47.0",
     "websockets>=13.0",
 ]
 
