@@ -41,9 +41,15 @@ Closing is not amnesia: the ACP session id is written to
 `~/.local/state/paca-acp-bridge/<agent id>.json` after every turn, and a later
 turn for the same conversation_id rebuilds the agent with
 `acp_resume_session_id`, which makes the SDK call `session/load` — i.e.
-`claude --resume` — so the chat comes back with its context. There is no
-sweeper and no watchdog here: one timer per conversation, armed where a turn
-ends and cancelled where the next one starts.
+`claude --resume` — so the chat comes back with its context. When that
+`session/load` does not take (the CLI pruned the transcript, the adapter was
+upgraded, the workspace moved), the SDK does not fail the turn — it silently
+starts a fresh, empty session — so the resume is checked, once, by comparing
+the session id it ended up on against the one that was asked for, before the
+message is sent; a resume that did not take falls back to replaying the
+transcript into that same turn. There is no sweeper and no watchdog here: one
+timer per conversation, armed where a turn ends and cancelled where the next
+one starts.
 """
 
 from __future__ import annotations
@@ -80,6 +86,16 @@ IDLE_MINUTES_ENV = "PACA_SESSION_IDLE_MINUTES"
 # their own after stdin is closed, before the survivors are killed.
 TEARDOWN_GRACE_SECONDS = 10.0
 _TEARDOWN_POLL_SECONDS = 0.1
+# On top of the grace period, how much longer a start_turn will wait for an
+# already-running idle close before giving up on it and starting a fresh
+# session anyway. The wait has to be bounded because the second half of a
+# teardown is the SDK's own `conversation.close()`, and that is only *partly*
+# bounded: `ACPAgent._shutdown_runtime` gives `conn.close` and the process wait
+# 5s each, but `self._executor.close()` and the file-credential release have no
+# timeout at all. This wait happens inline in the bridge's websocket read loop,
+# so an unbounded one stops the unit dispatching every *other* conversation's
+# turns too, not just this one's.
+_CLOSE_WAIT_EXTRA_SECONDS = 15.0
 # Bound on the remembered conversation_id -> ACP session id map. Every card wake
 # mints a new conversation_id and never comes back, so without a bound the state
 # file would grow forever; chats (which do come back) reuse one id and stay at
@@ -469,7 +485,10 @@ class ConversationRunner:
         # If the server sent the prior transcript, replay it as restored context
         # so the agent remembers the whole conversation instead of starting
         # blank. Warm resumes and session/load resumes skip this — the live (or
-        # reloaded) session already holds the context.
+        # reloaded) session already holds the context. A session/load that was
+        # rejected does NOT skip it: the SDK silently gives us a fresh, empty
+        # session instead, which is a cold start in everything but name (see
+        # _run_resumed_turn).
         if not history:
             return message
         return (
@@ -499,11 +518,22 @@ class ConversationRunner:
                     conversation, conversation_id, self._first_message(message, history)
                 )
             else:
-                error = await self._run_turn(conversation, conversation_id, message)
+                error = await self._run_resumed_turn(
+                    conversation=conversation,
+                    conversation_id=conversation_id,
+                    message=message,
+                    history=history,
+                    resume_session_id=resume_session_id,
+                )
                 if error is not None:
-                    # The saved id did not get us a working session. Forget it —
-                    # keeping it would fail the same way on every later turn —
-                    # and start this conversation over, once, from scratch.
+                    # A resume that actually *raised* — a transport failure, a
+                    # missing CLI binary, a crashed adapter — so there is no
+                    # working connection to carry on with. (A merely rejected
+                    # session/load does not come out here; the SDK swallows it,
+                    # which _run_resumed_turn handles in-place instead.) Forget
+                    # the saved id — keeping it would fail the same way on every
+                    # later turn — and start this conversation over, once, from
+                    # scratch.
                     logger.warning(
                         "Resuming the ACP session of conversation %s failed (%s); "
                         "forgetting the saved session id and starting a fresh session",
@@ -524,6 +554,87 @@ class ConversationRunner:
             await self._finish_turn(conversation_id, project_id, error)
         finally:
             self._arm_idle_timer(conversation_id)
+
+    async def _run_resumed_turn(
+        self,
+        *,
+        conversation: Conversation,
+        conversation_id: str,
+        message: str,
+        history: str,
+        resume_session_id: str,
+    ) -> Exception | None:
+        """Drive the first turn of a conversation built to resume a saved ACP
+        session, checking that the resume actually took.
+
+        Starting the session is split out of the turn because a *rejected*
+        `session/load` does not fail: `ACPAgent._start_acp_server` catches the
+        protocol error, logs "starting a fresh session", and falls through to
+        `session/new` (openhands-sdk 1.47.0 acp_agent.py:3124-3158). Nothing
+        raises, so the failure arm in `_run_cold_start` never fires — and
+        because this is the resume branch it would have sent the bare message,
+        skipping the history replay too. The chat would answer from a blank
+        agent, report "finished", and then save the new empty session's id.
+        That is reachable here without anything being broken: a chat idle past
+        the coding CLI's own transcript retention, a CLI upgrade, or a
+        server-side cwd mismatch (which the SDK deliberately leaves to
+        `session/load` to reject, acp_agent.py:2922-2932).
+
+        The id the SDK ended up on is the only signal there is, and it is
+        readable as soon as `init_state` has run (acp_agent.py:2338) — i.e.
+        before the message is sent, while this turn can still carry the
+        transcript itself. No rebuild is needed in that case: the fresh session
+        the SDK minted is a working one, exactly what a cold start would have
+        produced, and `_run_turn` saves its id on the way out.
+        """
+        error = await self._start_session(conversation, conversation_id)
+        if error is not None:
+            return error
+        if self._session_id_of(conversation) == resume_session_id:
+            # session/load took: the reloaded session already holds the
+            # context, so the transcript is not replayed on top of it.
+            return await self._run_turn(conversation, conversation_id, message)
+        logger.warning(
+            "Conversation %s did not resume its saved ACP session; the coding CLI "
+            "started a fresh, empty one instead. Replaying the transcript into this "
+            "turn so the chat keeps its context",
+            conversation_id,
+        )
+        return await self._run_turn(
+            conversation, conversation_id, self._first_message(message, history)
+        )
+
+    @staticmethod
+    async def _start_session(conversation: Conversation, conversation_id: str) -> Exception | None:
+        """Run the SDK's lazy init — spawn the ACP server and do session/load
+        or session/new — without sending anything yet.
+
+        This is exactly what `arun()` does first
+        (`local_conversation.py:2119`), off the loop for the same reason:
+        `init_state` blocks (an ACP agent resolves credentials synchronously).
+        It is idempotent and thread-safe, so the `arun()` inside the turn that
+        follows sees it already done and skips it.
+        """
+        try:
+            await asyncio.to_thread(conversation._ensure_agent_ready)
+        except Exception as exc:
+            logger.exception("Conversation %s could not start its ACP session", conversation_id)
+            return exc
+        return None
+
+    @staticmethod
+    def _session_id_of(conversation: Conversation) -> str | None:
+        """The ACP session id this conversation is actually on, as the SDK
+        records it in `state.agent_state` (acp_agent.py:2338)."""
+        try:
+            agent_state = conversation.state.agent_state
+        except Exception:
+            logger.debug("Conversation has no agent state", exc_info=True)
+            return None
+        if not isinstance(agent_state, dict):
+            return None
+        session_id = agent_state.get("acp_session_id")
+        return session_id if isinstance(session_id, str) and session_id else None
 
     async def _run_conversation(
         self, conversation: Conversation, conversation_id: str, project_id: str, message: str
@@ -627,6 +738,20 @@ class ConversationRunner:
                 logger.exception(
                     "Failed to stop the ACP process tree of conversation %s", conversation_id
                 )
+        else:
+            # `_process` is the SDK's own PrivateAttr (acp_agent.py:1870) and the
+            # only handle on the adapter it spawned; without it the tree walk —
+            # the whole point of this teardown — cannot run, and close() alone
+            # leaves `claude` and its MCP servers behind. Say so: "the leak fix
+            # did nothing" must be visible in journalctl, not silent. (A turn
+            # that never got as far as spawning the adapter lands here too, and
+            # legitimately has nothing to stop.)
+            logger.warning(
+                "Conversation %s has no ACP process handle; closing it without "
+                "stopping its process tree, so any coding CLI and MCP servers it "
+                "started may be left running",
+                conversation_id,
+            )
         try:
             # close() is a blocking SDK call (it waits on the portal loop and on
             # the subprocess), so it runs off this event loop.
@@ -638,14 +763,35 @@ class ConversationRunner:
         closing = self._closing.get(conversation_id)
         if closing is None:
             return
+        timeout = self._teardown_grace_seconds + _CLOSE_WAIT_EXTRA_SECONDS
         logger.info(
-            "Waiting for the idle close of conversation %s before starting its next turn",
+            "Waiting up to %.0fs for the idle close of conversation %s before starting "
+            "its next turn",
+            timeout,
             conversation_id,
         )
-        # Shielded: if this start_turn is cancelled, the teardown still finishes
-        # rather than being abandoned half-done.
-        with contextlib.suppress(Exception):
-            await asyncio.shield(closing)
+        # Shielded: if this start_turn is cancelled — or this wait gives up —
+        # the teardown still finishes rather than being abandoned half-done.
+        # Bounded: see _CLOSE_WAIT_EXTRA_SECONDS. Giving up costs this
+        # conversation nothing (its next turn is a cold start either way, and
+        # the old process tree is a different tree); waiting forever costs
+        # every other conversation on this unit its turn.
+        try:
+            await asyncio.wait_for(asyncio.shield(closing), timeout=timeout)
+        except TimeoutError:
+            logger.warning(
+                "The idle close of conversation %s is still running after %.0fs; "
+                "starting its next turn on a fresh session rather than blocking "
+                "this bridge any longer",
+                conversation_id,
+                timeout,
+            )
+            if self._closing.get(conversation_id) is closing:
+                self._closing.pop(conversation_id, None)
+        except Exception:
+            # A teardown that raised has already logged it; either way the
+            # conversation is gone and the next turn is a cold start.
+            logger.debug("The idle close of conversation %s failed", conversation_id, exc_info=True)
 
     # --------------------------------------------------------- session state
 
@@ -732,15 +878,9 @@ class ConversationRunner:
         created, so the first turn already has one; saving after every turn also
         picks up the new id whenever the SDK had to fall back to session/new.
         """
-        try:
-            agent_state = conversation.state.agent_state
-            if not isinstance(agent_state, dict):
-                return
-            session_id = agent_state.get("acp_session_id")
-        except Exception:
-            logger.debug("Conversation %s has no ACP session id", conversation_id, exc_info=True)
-            return
-        if not isinstance(session_id, str) or not session_id:
+        session_id = self._session_id_of(conversation)
+        if session_id is None:
+            logger.debug("Conversation %s has no ACP session id", conversation_id)
             return
         sessions = self._load_sessions()
         known = sessions.get(conversation_id, {}).get("acp_session_id")

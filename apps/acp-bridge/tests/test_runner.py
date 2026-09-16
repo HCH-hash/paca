@@ -352,33 +352,66 @@ class _FakeClock:
 class _FakeAgent:
     def __init__(self, **kwargs):
         self.kwargs = kwargs
+        # The SDK's own PrivateAttr: None until the adapter is spawned, and the
+        # only handle the teardown has on the process tree. Tests that care
+        # about the tree set it (see _FakeProcess).
         self._process = None
 
 
+class _FakeProcess:
+    """Stands in for ACPAgent._process — the spawned ACP adapter."""
+
+    def __init__(self, pid=424242):
+        self.pid = pid
+        self.stdin = None
+
+
 class _FakeState:
-    def __init__(self, session_id):
-        self.agent_state = {"acp_session_id": session_id}
+    def __init__(self):
+        # Empty until the session is created, exactly like the real one:
+        # ACPAgent.init_state writes acp_session_id (acp_agent.py:2338).
+        self.agent_state = {}
 
 
 class _FakeConversation:
     def __init__(self, sdk, agent, session_id):
         self.sdk = sdk
         self.agent = agent
-        self.state = _FakeState(session_id)
+        # The id this conversation's session will land on. A resume that took
+        # keeps the requested id; a resume the server rejected lands on a fresh
+        # one — the test says which by what it puts in _FakeSdk(session_ids=...).
+        self.session_id = session_id
+        self.state = _FakeState()
         self.messages = []
         self.closed = 0
         self.hold = None
+        self.started = 0
+
+    def _ensure_agent_ready(self):
+        """Mirrors LocalConversation._ensure_agent_ready: spawns the ACP server
+        and creates the session (session/load or session/new), publishing the id
+        it ended up on into agent_state. Idempotent, like the real one."""
+        self.started += 1
+        if self.state.agent_state.get("acp_session_id"):
+            return
+        if self.sdk.fail_resume and self.agent.kwargs.get("acp_resume_session_id"):
+            # A *transport* failure on resume — the connection is gone, so the
+            # SDK really does raise out of init_state. (A merely rejected
+            # session/load does NOT raise; it is modelled by handing this
+            # conversation a session_id different from the requested one.)
+            raise RuntimeError("the ACP connection died during session/load")
+        self.state.agent_state["acp_session_id"] = self.session_id
 
     def send_message(self, message):
         self.messages.append(message)
 
     async def arun(self):
+        # The real arun() runs the same lazy init first (local_conversation.py:2119).
+        await asyncio.to_thread(self._ensure_agent_ready)
         if self.hold is not None:
             await self.hold.wait()
         if self.sdk.fail_all:
             raise RuntimeError("the turn blew up")
-        if self.sdk.fail_resume and self.agent.kwargs.get("acp_resume_session_id"):
-            raise RuntimeError("session/load rejected")
 
     def close(self):
         self.closed += 1
@@ -392,7 +425,7 @@ class _FakeSdk:
     """Stands in for ACPAgent/Conversation so the tests never spawn a CLI."""
 
     def __init__(self, *, session_ids=None, fail_resume=False, fail_all=False,
-                 close_error=False, close_gate=None):
+                 close_error=False, close_gate=None, with_process=False):
         self.agents = []
         self.conversations = []
         self._session_ids = list(session_ids or [])
@@ -400,9 +433,12 @@ class _FakeSdk:
         self.fail_all = fail_all
         self.close_error = close_error
         self.close_gate = close_gate
+        self.with_process = with_process
 
     def _agent(self, **kwargs):
         agent = _FakeAgent(**kwargs)
+        if self.with_process:
+            agent._process = _FakeProcess(pid=424242 + len(self.agents))
         self.agents.append(agent)
         return agent
 
@@ -438,13 +474,14 @@ def _turn(conversation_id, message="hi", history=""):
     }
 
 
-def _make_runner(tmp_path, sent, clock, agent_id="agent-1"):
+def _make_runner(tmp_path, sent, clock, agent_id="agent-1", teardown_grace_seconds=0.0):
     return ConversationRunner(
         workspace="/tmp",
         send=_sender(sent),
         agent_id=agent_id,
         state_path=tmp_path / f"{agent_id}.json",
         call_later=clock.call_later,
+        teardown_grace_seconds=teardown_grace_seconds,
     )
 
 
@@ -580,7 +617,7 @@ async def test_next_turn_after_an_idle_close_resumes_the_saved_acp_session(
 
 async def test_a_restarted_runner_resumes_from_the_state_file(tmp_path, monkeypatch):
     monkeypatch.delenv("PACA_SESSION_IDLE_MINUTES", raising=False)
-    sdk = _FakeSdk(session_ids=["sess-from-disk"])
+    sdk = _FakeSdk(session_ids=["sess-from-disk", "sess-from-disk"])
     sdk.install(monkeypatch)
     clock, sent = _FakeClock(), []
 
@@ -614,7 +651,7 @@ async def test_the_state_file_is_private_to_its_owner(tmp_path, monkeypatch):
 async def test_start_turn_waits_for_an_in_flight_close(tmp_path, monkeypatch):
     monkeypatch.delenv("PACA_SESSION_IDLE_MINUTES", raising=False)
     gate = threading.Event()
-    sdk = _FakeSdk(close_gate=gate)
+    sdk = _FakeSdk(close_gate=gate, session_ids=["sess-a", "sess-a"])
     sdk.install(monkeypatch)
     clock, sent = _FakeClock(), []
     runner = _make_runner(tmp_path, sent, clock)
@@ -661,14 +698,70 @@ async def test_a_failing_close_does_not_stop_later_idle_timers(tmp_path, monkeyp
     assert runner._conversations == {}
 
 
-async def test_a_failed_resume_starts_a_fresh_session_once(tmp_path, monkeypatch):
-    monkeypatch.delenv("PACA_SESSION_IDLE_MINUTES", raising=False)
+def _save_session(tmp_path, session_id="gone"):
     (tmp_path / "agent-1.json").write_text(
         json.dumps(
-            {"version": 1, "sessions": {"conv-1": {"acp_session_id": "gone", "updated_at": 1}}}
+            {
+                "version": 1,
+                "sessions": {"conv-1": {"acp_session_id": session_id, "updated_at": 1}},
+            }
         ),
         encoding="utf-8",
     )
+
+
+async def test_a_silently_downgraded_resume_replays_the_transcript(
+    tmp_path, monkeypatch, caplog
+):
+    """The failure mode the pinned SDK actually produces.
+
+    openhands-sdk 1.47.0 does not fail a rejected `session/load`: it catches the
+    ACPRequestError, logs "starting a fresh session", and calls `session/new`
+    (acp_agent.py:3124-3158). So the turn SUCCEEDS on a blank agent — no
+    exception for the runner to notice — and, being the resume branch, it would
+    send the bare message with no history replay. The id the SDK landed on is
+    the only signal, and it has to be read before the message goes out.
+    """
+    monkeypatch.delenv("PACA_SESSION_IDLE_MINUTES", raising=False)
+    _save_session(tmp_path)
+    # Note: no fail_resume here. Nothing raises — the session simply comes up on
+    # a different id than the one that was asked for, exactly like the SDK.
+    sdk = _FakeSdk(session_ids=["fresh-sess"])
+    sdk.install(monkeypatch)
+    clock, sent = _FakeClock(), []
+    runner = _make_runner(tmp_path, sent, clock)
+
+    with caplog.at_level(logging.WARNING, logger="paca_acp_bridge.runner"):
+        await _run_turn_to_completion(runner, _turn("conv-1", "hello", history="U: earlier"))
+
+    # The session that came up is a working one, so it is used as-is: no
+    # teardown, no rebuild, one agent.
+    assert len(sdk.agents) == 1
+    assert sdk.agents[0].kwargs["acp_resume_session_id"] == "gone"
+    assert sdk.conversations[0].closed == 0
+    # The context survives because THIS turn carries the transcript.
+    assert "Restored conversation context" in sdk.conversations[0].messages[0]
+    assert "U: earlier" in sdk.conversations[0].messages[0]
+    assert sdk.conversations[0].messages[0].endswith("hello")
+    # And it is not silent.
+    assert any(
+        "did not resume its saved ACP session" in record.getMessage()
+        for record in caplog.records
+    )
+    assert [m["status"] for m in sent if m["type"] == "turn_status"] == ["finished"]
+
+    # The blank session's id replaces the stale one, so the next turn resumes
+    # the session that now actually holds the conversation.
+    saved = json.loads((tmp_path / "agent-1.json").read_text(encoding="utf-8"))
+    assert saved["sessions"]["conv-1"]["acp_session_id"] == "fresh-sess"
+
+
+async def test_a_resume_that_raises_starts_a_fresh_session_once(tmp_path, monkeypatch):
+    """The other arm: a resume that genuinely fails (transport died, adapter
+    crashed, CLI binary gone) does raise, and there is no usable connection to
+    carry on with — so the conversation is torn down and rebuilt once."""
+    monkeypatch.delenv("PACA_SESSION_IDLE_MINUTES", raising=False)
+    _save_session(tmp_path)
     sdk = _FakeSdk(fail_resume=True, session_ids=["gone", "fresh-sess"])
     sdk.install(monkeypatch)
     clock, sent = _FakeClock(), []
@@ -690,15 +783,28 @@ async def test_a_failed_resume_starts_a_fresh_session_once(tmp_path, monkeypatch
     assert saved["sessions"]["conv-1"]["acp_session_id"] == "fresh-sess"
 
 
+async def test_a_resume_that_took_sends_the_bare_message(tmp_path, monkeypatch):
+    """The happy path must stay cheap: when the session/load really did take,
+    the reloaded session already holds the context, so nothing is replayed on
+    top of it."""
+    monkeypatch.delenv("PACA_SESSION_IDLE_MINUTES", raising=False)
+    _save_session(tmp_path, "sess-a")
+    sdk = _FakeSdk(session_ids=["sess-a"])
+    sdk.install(monkeypatch)
+    clock, sent = _FakeClock(), []
+    runner = _make_runner(tmp_path, sent, clock)
+
+    await _run_turn_to_completion(runner, _turn("conv-1", "hello", history="U: earlier"))
+
+    assert len(sdk.agents) == 1
+    assert sdk.conversations[0].messages == ["hello"]
+    assert [m["status"] for m in sent if m["type"] == "turn_status"] == ["finished"]
+
+
 async def test_a_fresh_start_that_also_fails_is_reported_not_retried(tmp_path, monkeypatch):
     monkeypatch.delenv("PACA_SESSION_IDLE_MINUTES", raising=False)
-    (tmp_path / "agent-1.json").write_text(
-        json.dumps(
-            {"version": 1, "sessions": {"conv-1": {"acp_session_id": "gone", "updated_at": 1}}}
-        ),
-        encoding="utf-8",
-    )
-    sdk = _FakeSdk(fail_all=True)
+    _save_session(tmp_path)
+    sdk = _FakeSdk(fail_all=True, session_ids=["gone", "fresh-sess"])
     sdk.install(monkeypatch)
     clock, sent = _FakeClock(), []
     runner = _make_runner(tmp_path, sent, clock)
@@ -708,6 +814,99 @@ async def test_a_fresh_start_that_also_fails_is_reported_not_retried(tmp_path, m
     assert len(sdk.agents) == 2
     statuses = [m["status"] for m in sent if m["type"] == "turn_status"]
     assert statuses == ["failed"]
+
+
+async def test_the_idle_close_stops_the_acp_process_tree(tmp_path, monkeypatch):
+    """The point of the whole teardown: the SDK's own close() only terminates
+    the adapter, so the tree walk must actually run — against the agent's
+    `_process` handle, with the configured grace, and BEFORE close() drops that
+    handle."""
+    monkeypatch.delenv("PACA_SESSION_IDLE_MINUTES", raising=False)
+    sdk = _FakeSdk(with_process=True)
+    sdk.install(monkeypatch)
+    order = []
+
+    async def fake_shutdown(process, *, grace_seconds=None, poll_seconds=None):
+        order.append(("tree", process, grace_seconds))
+
+    monkeypatch.setattr(runner_module, "shutdown_process_tree", fake_shutdown)
+    clock, sent = _FakeClock(), []
+    runner = _make_runner(tmp_path, sent, clock, teardown_grace_seconds=3.0)
+
+    await _run_turn_to_completion(runner, _turn("conv-1"))
+    conversation = sdk.conversations[0]
+    inner_close = conversation.close
+
+    def tracked_close():
+        order.append(("close", None, None))
+        inner_close()
+
+    conversation.close = tracked_close
+
+    clock.advance(600.0)
+    await _drain_closes(runner)
+
+    assert [step[0] for step in order] == ["tree", "close"]
+    assert order[0][1] is sdk.agents[0]._process
+    assert order[0][2] == 3.0
+
+
+async def test_a_teardown_with_no_process_handle_says_so(tmp_path, monkeypatch, caplog):
+    """If `_process` is ever None — the SDK renames its PrivateAttr, or an
+    earlier cleanup already cleared it — the tree walk is skipped and the leak
+    is back. That must be visible in the journal, not silent."""
+    monkeypatch.delenv("PACA_SESSION_IDLE_MINUTES", raising=False)
+    sdk = _FakeSdk()  # with_process=False: agent._process stays None
+    sdk.install(monkeypatch)
+    clock, sent = _FakeClock(), []
+    runner = _make_runner(tmp_path, sent, clock)
+
+    await _run_turn_to_completion(runner, _turn("conv-1"))
+    with caplog.at_level(logging.WARNING, logger="paca_acp_bridge.runner"):
+        clock.advance(600.0)
+        await _drain_closes(runner)
+
+    assert sdk.conversations[0].closed == 1
+    assert any("no ACP process handle" in record.getMessage() for record in caplog.records)
+
+
+async def test_start_turn_gives_up_on_a_close_that_never_finishes(
+    tmp_path, monkeypatch, caplog
+):
+    """The close is awaited inline in the bridge's websocket read loop, and the
+    SDK's `conversation.close()` is only partly bounded (`_executor.close()` and
+    the file-credential release have no timeout). So the wait has to be bounded:
+    one stuck teardown must not stop this unit dispatching turns."""
+    monkeypatch.delenv("PACA_SESSION_IDLE_MINUTES", raising=False)
+    monkeypatch.setattr(runner_module, "_CLOSE_WAIT_EXTRA_SECONDS", 0.05)
+    gate = threading.Event()
+    sdk = _FakeSdk(close_gate=gate, session_ids=["sess-a", "sess-a"])
+    sdk.install(monkeypatch)
+    clock, sent = _FakeClock(), []
+    runner = _make_runner(tmp_path, sent, clock)
+
+    await _run_turn_to_completion(runner, _turn("conv-1"))
+    clock.advance(600.0)
+    close_task = runner._closing["conv-1"]
+
+    try:
+        with caplog.at_level(logging.WARNING, logger="paca_acp_bridge.runner"):
+            await _run_turn_to_completion(runner, _turn("conv-1", "second"))
+    finally:
+        gate.set()
+        await close_task
+
+    # The next turn ran anyway, on its own fresh conversation.
+    assert len(sdk.conversations) == 2
+    assert sdk.conversations[1].messages == ["second"]
+    assert [m["status"] for m in sent if m["type"] == "turn_status"] == [
+        "finished",
+        "finished",
+    ]
+    assert any("is still running after" in record.getMessage() for record in caplog.records)
+    # The abandoned close was dropped from the bookkeeping, not left to be
+    # waited on again by every later turn.
+    assert "conv-1" not in runner._closing
 
 
 @pytest.mark.skipif(not os.path.isdir("/proc"), reason="the process-tree walk needs /proc")
