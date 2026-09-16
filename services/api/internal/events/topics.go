@@ -237,11 +237,20 @@ const (
 // Streams for AI Agent pipeline.
 const (
 	// StreamAgentTriggers is the Valkey Stream key that services/api publishes
-	// trigger events to. services/ai-agent consumes with consumer group "ai-agent-workers".
+	// trigger events to. services/agent-runner consumes it with consumer group
+	// "agent-runner-workers" (internal/messaging/consumer.go). The Python
+	// services/ai-agent it replaced used "ai-agent-workers"; that group is
+	// still registered on instances upgraded from v0.14.x or earlier and
+	// nothing reads it — see docs/architecture/automation-workflows.md.
 	StreamAgentTriggers = "paca:agent:triggers"
 
-	// StreamAgentEvents is the Valkey Stream key that services/ai-agent publishes
-	// conversation events to. services/realtime consumes and fans out to Socket.IO.
+	// StreamAgentEvents is the Valkey Stream key services/agent-runner
+	// appends every conversation event to, as a durable history. NOTHING
+	// consumes it: live UI updates go to connected clients over
+	// ChannelRealtime's Pub/Sub, and a conversation's history is served from
+	// Postgres — so agent-runner caps it at its newest entries by count
+	// (messaging.EventsMaxLen). Don't start reading it from a stream
+	// consumer without changing that cap first.
 	StreamAgentEvents = "paca:agent:events"
 
 	// StreamAgentConversationStatus is the Valkey Stream key that

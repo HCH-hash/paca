@@ -96,7 +96,7 @@ func New(cfg *config.Config) (*App, error) {
 
 	cacheStore := cache.NewStore(redisClient, "paca:")
 
-	publisher := messaging.NewPublisher(redisClient, log)
+	publisher := messaging.NewPublisher(redisClient, log).WithStreamRetention(cfg.Redis.StreamRetention)
 
 	tokenManager := jwttoken.New(cfg.JWT.Secret, cfg.JWT.AccessTTL, cfg.JWT.RefreshTTL)
 	permissionStore := pgRepo.NewAuthzPermissionStore(db)

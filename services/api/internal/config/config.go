@@ -87,6 +87,13 @@ type DatabaseConfig struct {
 // RedisConfig holds Redis connection settings.
 type RedisConfig struct {
 	URL string
+	// StreamRetention is how long an entry appended to one of the API's
+	// Valkey streams is kept: each append drops the entries older than this
+	// (XADD MINID ~, see platform/messaging). By age, never by count, so a
+	// consumer group that falls behind still gets every entry of the window.
+	// PACA_STREAM_RETENTION, a Go duration, default "168h" (7 days), at
+	// least "1h".
+	StreamRetention time.Duration
 }
 
 // CacheConfig holds TTL settings for the different cache categories.

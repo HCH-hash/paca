@@ -220,6 +220,12 @@ services:
       # an external database (and scale postgres to 0).
       DATABASE_URL: ${DATABASE_URL:-postgres://${POSTGRES_USER:-paca}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-paca}?sslmode=disable}
       REDIS_URL: ${REDIS_URL:-redis://valkey:6379/0}
+      # How long an entry appended to a Valkey stream is kept — every XADD
+      # also drops the entries older than this, by age and never by count,
+      # so no stream grows without bound and a lagging consumer group still
+      # gets every entry inside the window. Keep it the same value as the
+      # agent-runner service's below.
+      PACA_STREAM_RETENTION: ${PACA_STREAM_RETENTION:-168h}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required — set it in your .env file}
       JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-15m}
       JWT_REFRESH_TTL: ${JWT_REFRESH_TTL:-168h}
@@ -371,6 +377,9 @@ services:
     # ranges those bindings are picked from.
     environment:
       VALKEY_URL: ${REDIS_URL:-redis://valkey:6379/0}
+      # Retention for this service's own conversation-status stream — the
+      # same variable and the same value the api service reads above.
+      PACA_STREAM_RETENTION: ${PACA_STREAM_RETENTION:-168h}
       DATABASE_URL: ${DATABASE_URL:-postgres://${POSTGRES_USER:-paca}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-paca}?sslmode=disable}
       # Pre-shared key authenticating services/api's calls into this
       # service's internal-only routes (/agent-bridge/status,

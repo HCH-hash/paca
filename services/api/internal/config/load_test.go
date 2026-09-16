@@ -256,6 +256,49 @@ func TestLoad_AdminPasswordTooShort(t *testing.T) {
 	}
 }
 
+func TestLoad_StreamRetention_Default(t *testing.T) {
+	setLoadDefaults(t)
+	t.Setenv("PACA_STREAM_RETENTION", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Redis.StreamRetention != 7*24*time.Hour {
+		t.Fatalf("expected default StreamRetention 168h, got %v", cfg.Redis.StreamRetention)
+	}
+}
+
+func TestLoad_StreamRetention_Custom(t *testing.T) {
+	setLoadDefaults(t)
+	t.Setenv("PACA_STREAM_RETENTION", "72h")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Redis.StreamRetention != 72*time.Hour {
+		t.Fatalf("expected StreamRetention 72h, got %v", cfg.Redis.StreamRetention)
+	}
+}
+
+// A window shorter than an hour could drop entries a consumer group has not
+// read while the API restarts, and "0" would drop every entry: both are
+// refused at startup instead.
+func TestLoad_StreamRetention_Refused(t *testing.T) {
+	for _, v := range []string{"30m", "0", "0s", "-168h", "7d", "forever"} {
+		setLoadDefaults(t)
+		t.Setenv("PACA_STREAM_RETENTION", v)
+		_, err := Load()
+		if err == nil {
+			t.Fatalf("PACA_STREAM_RETENTION=%q: expected an error", v)
+		}
+		if !strings.Contains(err.Error(), "PACA_STREAM_RETENTION") {
+			t.Fatalf("PACA_STREAM_RETENTION=%q: error should name the variable, got %q", v, err.Error())
+		}
+	}
+}
+
 // setLoadDefaults is a helper that seeds the minimum valid env vars so that
 // individual driver tests only need to set the vars they are exercising.
 func setLoadDefaults(t *testing.T) {

@@ -171,6 +171,15 @@ type Settings struct {
 	// not have a reachable hostname configured at all.
 	PortForwardHost string
 
+	// StreamRetention is how long an entry this service appends to
+	// messaging.StreamAgentConversationStatus is kept: each append drops the
+	// entries older than this (XADD MINID ~, see messaging.Publisher). By
+	// age, never by count, so a services/api consumer group that falls
+	// behind still gets every entry of the window. PACA_STREAM_RETENTION —
+	// the same variable services/api reads for its own streams — a Go
+	// duration, default "168h" (7 days), at least "1h".
+	StreamRetention time.Duration
+
 	LogLevel string
 }
 
@@ -269,7 +278,32 @@ func Load() (Settings, error) {
 		return Settings{}, err
 	}
 
+	retention, err := parseStreamRetention(envOr("PACA_STREAM_RETENTION", "168h"))
+	if err != nil {
+		return Settings{}, err
+	}
+	s.StreamRetention = retention
+
 	return s, nil
+}
+
+// minStreamRetention is the shortest PACA_STREAM_RETENTION accepted. A
+// shorter window could drop a terminal status services/api has not read yet
+// while the API is down for a restart or an upgrade.
+const minStreamRetention = time.Hour
+
+// parseStreamRetention parses PACA_STREAM_RETENTION: a Go duration of at
+// least minStreamRetention. Anything else fails the boot rather than trimming
+// the status stream by a window nobody meant.
+func parseStreamRetention(raw string) (time.Duration, error) {
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("config: PACA_STREAM_RETENTION: invalid duration %q: %w", raw, err)
+	}
+	if d < minStreamRetention {
+		return 0, fmt.Errorf("config: PACA_STREAM_RETENTION: %q is shorter than %s", raw, minStreamRetention)
+	}
+	return d, nil
 }
 
 // validatePortRange rejects a misconfigured start/end pair for one of the

@@ -64,6 +64,11 @@ func Load() (*Config, error) {
 		errs = append(errs, err)
 	}
 
+	streamRetention, err := parseStreamRetention(env("PACA_STREAM_RETENTION", "168h"))
+	if err != nil {
+		return nil, fmt.Errorf("config: PACA_STREAM_RETENTION: %w", err)
+	}
+
 	cacheProjectTTL, err := parseDuration(env("CACHE_PROJECT_TTL", "5m"))
 	if err != nil {
 		return nil, fmt.Errorf("config: CACHE_PROJECT_TTL: %w", err)
@@ -163,7 +168,8 @@ func Load() (*Config, error) {
 			DSN: dsn,
 		},
 		Redis: RedisConfig{
-			URL: redisURL,
+			URL:             redisURL,
+			StreamRetention: streamRetention,
 		},
 		Cache: CacheConfig{
 			ProjectTTL: cacheProjectTTL,
@@ -266,6 +272,25 @@ func parseDuration(s string) (time.Duration, error) {
 	d, err := time.ParseDuration(s)
 	if err != nil {
 		return 0, fmt.Errorf("invalid duration %q: %w", s, err)
+	}
+	return d, nil
+}
+
+// minStreamRetention is the shortest PACA_STREAM_RETENTION accepted. A
+// shorter window could drop entries a consumer group has not read yet while
+// the API is down for a restart or an upgrade.
+const minStreamRetention = time.Hour
+
+// parseStreamRetention parses PACA_STREAM_RETENTION: a Go duration of at
+// least minStreamRetention. Anything else is refused at startup rather than
+// trimming the streams by a window nobody meant.
+func parseStreamRetention(s string) (time.Duration, error) {
+	d, err := parseDuration(s)
+	if err != nil {
+		return 0, err
+	}
+	if d < minStreamRetention {
+		return 0, fmt.Errorf("%q is shorter than %s", s, minStreamRetention)
 	}
 	return d, nil
 }

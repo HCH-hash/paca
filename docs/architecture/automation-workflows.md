@@ -164,11 +164,24 @@ full DDL. Key constraints:
 
 ## Execution engine
 
-`internal/worker/workflow_consumer.go` (`WorkflowConsumer`) subscribes to the
-same Valkey stream the task-activity pipeline already writes to,
+`internal/worker/automation_consumer.go` (`AutomationConsumer`) subscribes to
+the same Valkey stream the task-activity pipeline already writes to,
 `paca.task_activities` (`events.StreamTaskActivities`), under its own
-consumer group `api.workflow_engine` — it is a sibling reader, not a special
+consumer group `api.automation_engine` — it is a sibling reader, not a special
 case wired into the HTTP handler.
+
+> Until v0.15.0 this was `internal/worker/workflow_consumer.go`
+> (`WorkflowConsumer`) reading under consumer group `api.workflow_engine`.
+> That file was removed when the automation engine replaced it, and nothing
+> creates, reads or deletes `api.workflow_engine` any more. **On an instance
+> upgraded from v0.14.x or earlier the group is still registered on
+> `paca.task_activities` and its lag grows with every task activity
+> published since the upgrade** — it is a leftover, not a stalled consumer,
+> and it holds nothing: a Valkey consumer group never pins stream entries,
+> trimming removes them regardless of what a group has read. Drop it once
+> with `XGROUP DESTROY paca.task_activities api.workflow_engine`. The same
+> applies to `ai-agent-workers` on `paca:agent:triggers`, the Python
+> services/ai-agent group that `agent-runner-workers` replaced.
 
 On every `task.updated` activity whose `FieldChange[]` includes a `status`
 entry:

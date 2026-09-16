@@ -121,7 +121,7 @@ func run(log *slog.Logger) error {
 	// side effects fire for a provider_cli entry too.
 	providerCLIEnvClients := chatsandbox.New()
 	inFlight := registry.New()
-	publisher := messaging.NewPublisher(redisClient)
+	publisher := messaging.NewPublisher(redisClient).WithStreamRetention(settings.StreamRetention)
 	agentRepo := postgres.NewAgentRepository(db)
 
 	acpRegistry := acpbridge.New(redisClient, publisher, log)
@@ -188,6 +188,7 @@ func run(log *slog.Logger) error {
 		"chat_sandbox_idle_timeout", settings.ChatSandboxIdleTimeout,
 		"http_addr", settings.HTTPAddr,
 		"mcp_dev_source_dir", settings.MCPDevSourceDir,
+		"stream_retention", settings.StreamRetention.String(),
 	)
 	// Backgrounded, not awaited — see reconcileEnvironmentsOnStartup's own
 	// doc comment for why blocking here used to be a crash-loop risk.

@@ -14,7 +14,8 @@ const (
 	// conversation event to. Confirmed (by reading the real Python source,
 	// not the docs) that nothing in services/api currently consumes this;
 	// it exists purely as an event history. Live UI updates go through
-	// ChannelRealtime instead, below — don't conflate the two.
+	// ChannelRealtime instead, below — don't conflate the two. Having no
+	// reader, it keeps only its newest EventsMaxLen entries (publisher.go).
 	StreamAgentEvents = "paca:agent:events"
 	// ChannelRealtime is the Valkey Pub/Sub channel services/realtime
 	// subscribes to for immediate WebSocket fan-out — matches
