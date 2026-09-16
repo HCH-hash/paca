@@ -46,9 +46,7 @@ class BridgeClient:
         self._token = token
         # agent_id keys the file the runner remembers ACP session ids in, so a
         # conversation closed for idleness can be resumed with its context.
-        self._runner = ConversationRunner(
-            workspace=workspace, send=self._send, agent_id=agent_id
-        )
+        self._runner = ConversationRunner(workspace=workspace, send=self._send, agent_id=agent_id)
         self._ws: Any = None
         # Outbound messages (events + turn_status) are queued rather than sent
         # directly — _sender_loop is the only thing that ever calls ws.send(),
