@@ -395,8 +395,15 @@ func TestMain(m *testing.M) {
 		Started: true,
 	})
 	if err != nil {
-		_ = pgC.Terminate(bgCtx)
-		_ = redisC.Terminate(bgCtx)
+		// A WARN, not a FATAL: sharedMinIOEndpoint stays empty and only the tests
+		// that need object storage skip (see newE2EEnv). Postgres and Valkey are
+		// deliberately NOT terminated here — the two Terminate calls that used to
+		// sit in this branch belong to the fatal paths above, where the process
+		// exits on the next line. Here m.Run() still follows, so tearing them down
+		// left the WHOLE suite running against two dead containers: every e2e test
+		// failed with "connection refused", not just the attachment ones. That is
+		// reachable on any runner that cannot pull minio/minio (anonymous Docker
+		// Hub rate limiting is enough).
 		fmt.Fprintf(os.Stderr, "WARN: start minio container: %v – attachment tests will be skipped\n", err)
 	} else {
 		minioHost, _ := minioC.Host(bgCtx)
