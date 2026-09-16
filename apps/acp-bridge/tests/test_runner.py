@@ -22,7 +22,9 @@ from paca_acp_bridge.runner import ConversationRunner, resolve_acp_command
 def test_resolve_builtin_provider_uses_sdk_default_command():
     command = resolve_acp_command("claude-code", [])
     assert command[:2] == ["npx", "-y"]
-    assert "claude-agent-acp" in command[2]
+    # The package is matched anywhere after the npx flags, not at a fixed index:
+    # openhands-sdk 1.47.0 inserts --prefer-offline before it.
+    assert any("claude-agent-acp" in part for part in command[2:])
 
 
 def test_resolve_custom_provider_uses_explicit_command():
